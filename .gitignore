@@ -8,3 +8,4 @@ data/
 *.tgz
 coverage/
 .DS_Store
+IDEA.md
