@@ -11,15 +11,15 @@
   <rect width="1200" height="300" rx="18" fill="url(#bg)"/>
   <rect width="1200" height="300" rx="18" fill="url(#grid)"/>
 
-  <!-- mark -->
-  <g transform="translate(80 92)">
-    <rect width="96" height="18" rx="9" fill="#ff5a64"/>
-    <rect y="40" width="62" height="18" rx="9" fill="#f0a53a"/>
-    <rect y="80" width="80" height="18" rx="9" fill="#6f7885"/>
+  <!-- mark: an "S" traced from the browser (blue) to the server error (red) -->
+  <g transform="translate(64 94) scale(5.25) translate(-4 -4)">
+    <path d="M22 8H13a4 4 0 0 0 0 8h6a4 4 0 0 1 0 8H10" fill="none" stroke="#e6e9ee" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="22" cy="8" r="3.3" fill="#5b8ff9"/>
+    <circle cx="10" cy="24" r="3.3" fill="#ff5a64"/>
   </g>
 
-  <text x="210" y="150" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="72" font-weight="800" fill="#e6e9ee" letter-spacing="-2">Super-Logs</text>
-  <text x="212" y="196" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="26" fill="#8d96a3">Self-hosted observability for web apps. One container. One SQLite file.</text>
+  <text x="214" y="144" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="72" font-weight="800" fill="#e6e9ee" letter-spacing="-2">Super-Logs</text>
+  <text font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="24" fill="#8d96a3"><tspan x="216" y="186">Self-hosted observability for web apps.</tspan><tspan x="216" y="218">One container. One SQLite file.</tspan></text>
 
   <!-- faux log lines -->
   <g font-family="JetBrains Mono, Menlo, Consolas, monospace" font-size="15" transform="translate(830 60)">

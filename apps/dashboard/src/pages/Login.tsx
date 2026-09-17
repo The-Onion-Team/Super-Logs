@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, errorMessage, type User } from "../api";
-import { ErrorNote } from "../components/bits";
+import { BrandMark, ErrorNote } from "../components/bits";
 
 export function LoginPage({ onSignedIn }: { onSignedIn: (user: User) => void }) {
   const [error, setError] = useState<string | null>(null);
@@ -29,11 +29,7 @@ export function LoginPage({ onSignedIn }: { onSignedIn: (user: User) => void }) 
         }}
       >
         <div className="brand large">
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
+          <BrandMark size={28} />
           Super-Logs
         </div>
         <label>

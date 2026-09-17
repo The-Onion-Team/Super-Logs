@@ -1,5 +1,6 @@
 import type { Project, User } from "../api";
 import { Link, navigate } from "../router";
+import { BrandMark } from "./bits";
 
 export function Layout(props: {
   user: User;
@@ -15,11 +16,7 @@ export function Layout(props: {
     <div className="shell">
       <header className="topbar">
         <Link to="/" className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
+          <BrandMark />
           Super-Logs
         </Link>
 

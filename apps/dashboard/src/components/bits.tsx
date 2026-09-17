@@ -3,6 +3,24 @@ import type { Level } from "../api";
 
 export const LEVEL_ORDER: Level[] = ["debug", "info", "warning", "error", "critical"];
 
+/** The Super-Logs mark: an "S" traced from the browser (blue) to the server error (red). */
+export function BrandMark({ size = 18 }: { size?: number }) {
+  return (
+    <svg className="brand-mark" width={size} height={size} viewBox="4 4 24 24" aria-hidden="true">
+      <path
+        d="M22 8H13a4 4 0 0 0 0 8h6a4 4 0 0 1 0 8H10"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="22" cy="8" r="3.3" className="brand-mark-start" />
+      <circle cx="10" cy="24" r="3.3" className="brand-mark-end" />
+    </svg>
+  );
+}
+
 export function LevelBadge({ level }: { level: Level }) {
   return <span className={`level level-${level}`}>{level === "warning" ? "warn" : level === "critical" ? "crit" : level}</span>;
 }

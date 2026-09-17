@@ -147,6 +147,9 @@ select {
   padding: 6px 8px;
   min-width: 0;
 }
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
 input:focus-visible,
 select:focus-visible,
 button:focus-visible,
@@ -200,29 +203,18 @@ tr:focus-visible {
 }
 .brand.large {
   font-size: 22px;
+  gap: 10px;
   justify-content: center;
   margin-bottom: 8px;
 }
 .brand-mark {
-  display: inline-grid;
-  gap: 2px;
-  width: 16px;
+  flex-shrink: 0;
 }
-.brand-mark i {
-  display: block;
-  height: 3px;
-  border-radius: 2px;
+.brand-mark-start {
+  fill: var(--accent);
 }
-.brand-mark i:nth-child(1) {
-  background: var(--error);
-}
-.brand-mark i:nth-child(2) {
-  background: var(--warning);
-  width: 65%;
-}
-.brand-mark i:nth-child(3) {
-  background: var(--debug);
-  width: 85%;
+.brand-mark-end {
+  fill: var(--error);
 }
 
 .nav {
@@ -757,5 +749,65 @@ table.kv th {
   }
   .account-email {
     display: none;
+  }
+
+  /* Top bar: brand and sign-out on the first row, project and nav on the second. */
+  .topbar {
+    gap: 4px 12px;
+  }
+  .account {
+    order: 1;
+  }
+  .topbar::after {
+    content: "";
+    order: 1;
+    flex-basis: 100%;
+  }
+  .project-picker {
+    order: 2;
+  }
+  .project-picker select {
+    max-width: 150px;
+  }
+  .nav {
+    order: 3;
+    flex: 1 1 0;
+    min-width: 50%;
+    overflow-x: auto;
+  }
+
+  .summary {
+    gap: 8px;
+  }
+  .counters {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%;
+  }
+  .counter {
+    min-width: 0;
+    padding: 6px;
+  }
+  .counter strong {
+    font-size: 18px;
+  }
+  .counter span {
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .histogram {
+    flex-basis: 100%;
+    height: 56px;
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .filters input[type="search"],
+  .filters .toggle {
+    grid-column: 1 / -1;
   }
 }
