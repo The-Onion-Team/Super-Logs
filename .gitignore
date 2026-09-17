@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.tgz
+coverage/
+.DS_Store
+
+# FantaF1 is a separate repository (the first app integrated with Super-Logs),
+# kept alongside for local development only.
+FantaF1/

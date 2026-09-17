@@ -1,0 +1,60 @@
+{
+  "name": "@super-logs/browser",
+  "version": "0.1.0",
+  "description": "Browser SDK for Super-Logs: error capture, failed-request tracking and request correlation, in a few KB.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/The-Onion-Team/Super-Logs.git",
+    "directory": "packages/browser"
+  },
+  "homepage": "https://github.com/The-Onion-Team/Super-Logs#readme",
+  "bugs": "https://github.com/The-Onion-Team/Super-Logs/issues",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "logging",
+    "observability",
+    "error-tracking",
+    "react",
+    "self-hosted"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "react": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@super-logs/shared": "0.1.0",
+    "@types/react": "^19.3.0",
+    "react": "^19.3.0",
+    "tsup": "^8.5.1"
+  }
+}

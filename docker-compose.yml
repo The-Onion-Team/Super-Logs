@@ -1,0 +1,32 @@
+services:
+  super-logs:
+    build:
+      context: .
+      args:
+        SUPER_LOGS_VERSION: ${SUPER_LOGS_VERSION:-dev}
+    image: super-logs
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Loopback only: put a reverse proxy or a Cloudflare Tunnel in front
+      # (e.g. logs.example.com -> http://127.0.0.1:3400).
+      - "127.0.0.1:3400:3000"
+    volumes:
+      - super-logs-data:/data
+    # Measured footprint is about 90 MB RSS; this is a ceiling, not a target.
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# A named network, so apps in other compose projects on the same host can
+# reach Super-Logs as http://super-logs:3000 without leaving the machine:
+#   networks: { super-logs: { external: true } }
+networks:
+  default:
+    name: super-logs
+
+volumes:
+  super-logs-data:

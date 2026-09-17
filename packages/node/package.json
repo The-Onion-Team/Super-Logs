@@ -1,0 +1,47 @@
+{
+  "name": "@super-logs/node",
+  "version": "0.1.0",
+  "description": "Node.js SDK for Super-Logs: structured logs, request correlation and error capture that never blocks your app.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/The-Onion-Team/Super-Logs.git",
+    "directory": "packages/node"
+  },
+  "homepage": "https://github.com/The-Onion-Team/Super-Logs#readme",
+  "bugs": "https://github.com/The-Onion-Team/Super-Logs/issues",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "keywords": [
+    "logging",
+    "observability",
+    "error-tracking",
+    "self-hosted"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@super-logs/shared": "0.1.0",
+    "tsup": "^8.5.1"
+  }
+}

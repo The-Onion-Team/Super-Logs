@@ -1,0 +1,40 @@
+{
+  "name": "super-logs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted, lightweight observability and incident response for web apps.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/The-Onion-Team/Super-Logs.git"
+  },
+  "homepage": "https://github.com/The-Onion-Team/Super-Logs#readme",
+  "bugs": "https://github.com/The-Onion-Team/Super-Logs/issues",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/node",
+    "packages/browser",
+    "apps/server",
+    "apps/dashboard"
+  ],
+  "scripts": {
+    "build": "npm run build -w @super-logs/shared -w @super-logs/node -w @super-logs/browser -w @super-logs/dashboard -w @super-logs/server",
+    "dev": "npm run dev -w @super-logs/server",
+    "dev:dashboard": "npm run dev -w @super-logs/dashboard",
+    "start": "npm run start -w @super-logs/server",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "pack:sdks": "npm run build -w @super-logs/node -w @super-logs/browser && mkdir -p dist/sdks && npm pack -w @super-logs/node -w @super-logs/browser --pack-destination dist/sdks"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "happy-dom": "^20.14.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}
