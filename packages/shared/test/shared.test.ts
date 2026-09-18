@@ -71,6 +71,17 @@ describe("fingerprint", () => {
     expect(normalizeMessage('League "alpha" missing for mario@example.com')).toBe("League <str> missing for <email>");
   });
 
+  it("normalises numbers that carry a unit, so timings do not fragment groups", () => {
+    // A digit followed by a letter has no word boundary between them, so these
+    // used to survive and give every occurrence its own fingerprint.
+    expect(normalizeMessage("no response after 245ms")).toBe("no response after <n>");
+    expect(normalizeMessage("payload 512kb exceeds the limit")).toBe("payload <n> exceeds the limit");
+    expect(normalizeMessage("retry in 5s")).toBe("retry in <n>");
+    expect(fingerprint({ message: "no response after 245ms" })).toBe(fingerprint({ message: "no response after 1980ms" }));
+    // Identifiers whose digits follow letters are left alone.
+    expect(normalizeMessage("sha256 mismatch in utf8 payload")).toBe("sha256 mismatch in utf8 payload");
+  });
+
   it("normalises route ids", () => {
     expect(normalizeRoute("/league/42/team/cm1abcdefghijklmnopqrstu?tab=1")).toBe("/league/:n/team/:id");
   });

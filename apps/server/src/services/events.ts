@@ -363,7 +363,131 @@ export function eventStats(db: Db, projectId: string, windowHours = 24) {
       slot.total += b.total;
     }
   }
-  return { windowHours, byLevel, hourly };
+  return { windowHours, byLevel, hourly, latency: latencyStats(db, projectId, windowHours, since), groups: errorGroups(db, projectId, windowHours, since) };
+}
+
+export interface LatencyBucket {
+  start: string;
+  /** Null where the hour held no event carrying a duration. */
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+  count: number;
+}
+
+/**
+ * Hourly p50/p95/p99 of `duration_ms`. SQLite has no percentile function, so the
+ * rows are ranked per bucket and the nearest-rank value is picked out.
+ */
+export function latencyStats(db: Db, projectId: string, windowHours: number, since: number): LatencyBucket[] {
+  const rows = db
+    .prepare(
+      `WITH timed AS (
+         SELECT CAST((ts - ?) / 3600000 AS INTEGER) AS bucket, duration_ms
+         FROM events
+         WHERE project_id = ? AND ts >= ? AND duration_ms IS NOT NULL
+       ),
+       ranked AS (
+         SELECT bucket, duration_ms,
+                ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY duration_ms) AS rn,
+                COUNT(*) OVER (PARTITION BY bucket) AS n
+         FROM timed
+       )
+       SELECT bucket, n,
+              MAX(CASE WHEN rn = MAX(1, CAST(ROUND(n * 0.50) AS INTEGER)) THEN duration_ms END) AS p50,
+              MAX(CASE WHEN rn = MAX(1, CAST(ROUND(n * 0.95) AS INTEGER)) THEN duration_ms END) AS p95,
+              MAX(CASE WHEN rn = MAX(1, CAST(ROUND(n * 0.99) AS INTEGER)) THEN duration_ms END) AS p99
+       FROM ranked GROUP BY bucket, n`,
+    )
+    .all(since, projectId, since) as { bucket: number; n: number; p50: number | null; p95: number | null; p99: number | null }[];
+
+  const buckets: LatencyBucket[] = Array.from({ length: windowHours }, (_, i) => ({
+    start: new Date(since + i * 3_600_000).toISOString(),
+    p50: null,
+    p95: null,
+    p99: null,
+    count: 0,
+  }));
+  for (const row of rows) {
+    const slot = buckets[Math.min(Math.max(Math.floor(row.bucket), 0), windowHours - 1)];
+    if (!slot) continue;
+    slot.p50 = row.p50;
+    slot.p95 = row.p95;
+    slot.p99 = row.p99;
+    slot.count = row.n;
+  }
+  return buckets;
+}
+
+export interface ErrorGroup {
+  fingerprint: string;
+  title: string;
+  message: string;
+  level: Level;
+  service: string | null;
+  route: string | null;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+  /** Per-hour counts across the same window, for the row's sparkline. */
+  spark: number[];
+}
+
+/**
+ * The loudest error groups in the window — what is broken, in priority order.
+ * The chronological stream cannot answer this: one exception repeated 4,000
+ * times looks like 4,000 problems.
+ */
+export function errorGroups(db: Db, projectId: string, windowHours: number, since: number, limit = 10): ErrorGroup[] {
+  const totals = db
+    .prepare(
+      `SELECT fingerprint, COUNT(*) AS n, MIN(ts) AS first_seen, MAX(ts) AS last_seen, MAX(level) AS level
+       FROM events
+       WHERE project_id = ? AND ts >= ? AND level >= ? AND fingerprint IS NOT NULL
+       GROUP BY fingerprint
+       ORDER BY n DESC
+       LIMIT ?`,
+    )
+    .all(projectId, since, LEVEL_RANK.error, limit) as {
+    fingerprint: string;
+    n: number;
+    first_seen: number;
+    last_seen: number;
+    level: number;
+  }[];
+
+  // One indexed lookup per group for a representative event, and one for the
+  // sparkline; both ride events_fingerprint and stay tiny at limit = 10.
+  const latest = db.prepare(
+    "SELECT error_name, error_message, message, service, route FROM events WHERE project_id = ? AND fingerprint = ? ORDER BY ts DESC LIMIT 1",
+  );
+  const perHour = db.prepare(
+    `SELECT CAST((ts - ?) / 3600000 AS INTEGER) AS bucket, COUNT(*) AS n
+     FROM events WHERE project_id = ? AND fingerprint = ? AND ts >= ? GROUP BY bucket`,
+  );
+
+  return totals.map((row) => {
+    const sample = latest.get(projectId, row.fingerprint) as
+      | { error_name: string | null; error_message: string | null; message: string; service: string | null; route: string | null }
+      | undefined;
+    const spark = new Array<number>(windowHours).fill(0);
+    for (const bucket of perHour.all(since, projectId, row.fingerprint, since) as { bucket: number; n: number }[]) {
+      const slot = Math.min(Math.max(Math.floor(bucket.bucket), 0), windowHours - 1);
+      spark[slot] = (spark[slot] ?? 0) + bucket.n;
+    }
+    return {
+      fingerprint: row.fingerprint,
+      title: sample?.error_name ?? sample?.message ?? "Error",
+      message: sample?.error_message ?? sample?.message ?? "",
+      level: RANK_TO_LEVEL.get(row.level) ?? "error",
+      service: sample?.service ?? null,
+      route: sample?.route ?? null,
+      count: row.n,
+      firstSeen: new Date(row.first_seen).toISOString(),
+      lastSeen: new Date(row.last_seen).toISOString(),
+      spark,
+    };
+  });
 }
 
 function parseJson<T>(value: string | null): T | null {
