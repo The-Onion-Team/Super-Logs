@@ -281,6 +281,57 @@ describe("dashboard API", () => {
     expect(filled[23]).toBe(1);
   });
 
+  it("reports latency percentiles per hour, and leaves untimed hours null", async () => {
+    const now = Date.now();
+    // 50 timed events of 1..50ms in one hour (the per-minute ingest cap in this
+    // config). Nearest rank: p50 -> row 25, p95 -> row 48, p99 -> row 50.
+    await ingest({
+      events: Array.from({ length: 50 }, (_, i) => ({
+        level: "info" as const,
+        message: `req ${i}`,
+        durationMs: i + 1,
+        timestamp: new Date(now - 90 * 60_000).toISOString(),
+      })),
+    });
+    const client = browser();
+    await client.signInReady();
+    const stats = await read(client.get(`/api/projects/${projectId}/stats?hours=24`));
+    const timed = stats.latency.filter((b: { count: number }) => b.count > 0);
+    expect(timed).toHaveLength(1);
+    expect(timed[0]).toMatchObject({ count: 50, p50: 25, p95: 48, p99: 50 });
+    // Every other hour saw no duration at all — a gap, never a zero.
+    expect(stats.latency.filter((b: { p95: number | null }) => b.p95 === null)).toHaveLength(23);
+  });
+
+  it("groups errors by fingerprint and ranks them by volume", async () => {
+    const now = Date.now();
+    const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+    await ingest({
+      events: [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          level: "error" as const,
+          message: "Timeout talking to upstream",
+          error: { name: "TimeoutError", message: "upstream did not answer" },
+          service: "api",
+          route: "/api/standings",
+          timestamp: at(30 + i),
+        })),
+        { level: "error", message: "Cannot read properties of undefined", error: { name: "TypeError", message: "x is undefined" }, timestamp: at(10) },
+        // Warnings and below never enter the group list.
+        { level: "warning", message: "slow query", timestamp: at(5) },
+      ],
+    });
+    const client = browser();
+    await client.signInReady();
+    const stats = await read(client.get(`/api/projects/${projectId}/stats?hours=24`));
+    expect(stats.groups).toHaveLength(2);
+    expect(stats.groups[0]).toMatchObject({ title: "TimeoutError", count: 5, service: "api", route: "/api/standings", level: "error" });
+    expect(stats.groups[1]).toMatchObject({ title: "TypeError", count: 1 });
+    expect(stats.groups[0].spark).toHaveLength(24);
+    expect(stats.groups[0].spark.reduce((a: number, b: number) => a + b, 0)).toBe(5);
+    expect(stats.groups.some((g: { title: string }) => g.title === "slow query")).toBe(false);
+  });
+
   it("requires the slug to delete a project", async () => {
     const client = browser();
     await client.signInReady();

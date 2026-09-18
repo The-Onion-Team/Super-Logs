@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage, type Facets, type Project, type Stats, type StoredEvent } from "../api";
 import { ErrorNote, LEVEL_ORDER, LevelBadge, Time } from "../components/bits";
+import { ErrorGroups } from "../components/ErrorGroups";
+import { ErrorRate, Latency } from "../components/charts";
 import { EventDetail } from "../components/EventDetail";
 import { Histogram } from "../components/Histogram";
 import { Link, useQueryState } from "../router";
@@ -139,6 +141,15 @@ export function LogsPage({ project }: { project: Project }) {
           </>
         )}
       </section>
+
+      {stats && (
+        <section className="charts" aria-label="Trends over the last 24 hours">
+          <ErrorRate buckets={stats.hourly} />
+          <Latency buckets={stats.latency} />
+        </section>
+      )}
+
+      {stats && <ErrorGroups groups={stats.groups} onSelect={(fingerprint) => setParams({ fingerprint, level: undefined, exactLevel: undefined })} />}
 
       <form
         className="filters"

@@ -19,6 +19,28 @@ import { csrf, requireAdmin, requireUser } from "./guards.js";
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
+/**
+ * The stats payload aggregates over the whole window, and `node:sqlite` is
+ * synchronous — so an uncached one would block ingest on every live-tail poll.
+ * A short TTL keeps the dashboard usefully fresh and the writer unblocked.
+ */
+const STATS_TTL_MS = 15_000;
+const statsCache = new Map<string, { at: number; value: unknown }>();
+
+function cachedStats(db: Parameters<typeof eventStats>[0], projectId: string, hours: number): unknown {
+  const key = `${projectId}:${hours}`;
+  const hit = statsCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < STATS_TTL_MS) return hit.value;
+  const value = eventStats(db, projectId, hours);
+  statsCache.set(key, { at: now, value });
+  // Projects come and go; the cache must not pin them forever.
+  if (statsCache.size > 64) {
+    for (const [k, entry] of statsCache) if (now - entry.at >= STATS_TTL_MS) statsCache.delete(k);
+  }
+  return value;
+}
+
 /** Dashboard API. Cookie-authenticated; every write is CSRF-checked. */
 export function apiRoutes() {
   const app = new Hono<AppEnv>();
@@ -117,7 +139,7 @@ export function apiRoutes() {
     const { db } = c.get("deps");
     if (!getProject(db, c.req.param("id"))) return c.json({ error: "not_found" }, 404);
     const hours = Math.min(168, Math.max(1, Number(c.req.query("hours") ?? 24) || 24));
-    return c.json(eventStats(db, c.req.param("id"), hours));
+    return c.json(cachedStats(db, c.req.param("id"), hours));
   });
 
   // --- administration ------------------------------------------------------

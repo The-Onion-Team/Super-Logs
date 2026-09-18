@@ -23,7 +23,11 @@ const ISO_DATE = /\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z
 const IP = /\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g;
 const QUOTED = /(["'`])(?:(?!\1)[^\\\n]|\\.){0,200}\1/g;
 const URL_QUERY = /\?[^\s"')]*/g;
-const NUMBER = /\b\d+(?:\.\d+)?\b/g;
+// The trailing unit is part of the match: `\b` never falls between a digit and a
+// letter, so without it `245ms`, `512kb` and `5s` survive normalisation and every
+// timing in a message becomes its own error group. Leading `\b` still protects
+// identifiers whose digits follow letters (utf8, sha256, v2beta).
+const NUMBER = /\b\d+(?:\.\d+)?[a-z]{0,4}\b/gi;
 const EMAIL = /\b[^\s@]+@[^\s@]+\.[a-z]{2,}\b/gi;
 
 /** Turns a concrete message into its template: `User 42 not found` → `User <n> not found`. */

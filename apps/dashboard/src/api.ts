@@ -50,10 +50,33 @@ export interface StoredEvent {
   metadata: Record<string, unknown> | null;
 }
 
+export interface LatencyBucket {
+  start: string;
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+  count: number;
+}
+
+export interface ErrorGroup {
+  fingerprint: string;
+  title: string;
+  message: string;
+  level: Level;
+  service: string | null;
+  route: string | null;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+  spark: number[];
+}
+
 export interface Stats {
   windowHours: number;
   byLevel: Record<Level, number>;
   hourly: { start: string; errors: number; total: number }[];
+  latency: LatencyBucket[];
+  groups: ErrorGroup[];
 }
 
 export interface Facets {
