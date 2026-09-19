@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp, createDeps, type AppDeps } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/index.js";
 import { ensureAdmin } from "../src/services/auth.js";
 import { createKey, createProject } from "../src/services/projects.js";
 import { deleteExpiredEvents, ftsQuery } from "../src/services/events.js";
+import { dispatchPendingAlerts } from "../src/services/incidents.js";
 
 const ORIGIN = "https://logs.example.com";
 const ADMIN = { email: "admin@example.com", password: "correct horse battery" };
@@ -330,6 +331,60 @@ describe("dashboard API", () => {
     expect(stats.groups[0].spark).toHaveLength(24);
     expect(stats.groups[0].spark.reduce((a: number, b: number) => a + b, 0)).toBe(5);
     expect(stats.groups.some((g: { title: string }) => g.title === "slow query")).toBe(false);
+  });
+
+  it("creates one incident for repeated events and deduplicates alerts during its cooldown", async () => {
+    const now = Date.now();
+    await ingest({
+      events: [
+        { level: "error", message: "Payment provider timed out", service: "api", timestamp: new Date(now - 2_000).toISOString() },
+        { level: "error", message: "Payment provider timed out", service: "api", timestamp: new Date(now - 1_000).toISOString() },
+      ],
+    });
+    await ingest({ events: [{ level: "error", message: "Payment provider timed out", service: "api" }] });
+
+    const incidentRows = deps.db.prepare("SELECT status, event_count FROM incidents").all() as { status: string; event_count: number }[];
+    expect(incidentRows).toEqual([{ status: "open", event_count: 3 }]);
+    expect((deps.db.prepare("SELECT COUNT(*) AS n FROM incident_alerts").get() as { n: number }).n).toBe(1);
+
+    const client = browser();
+    await client.signInReady();
+    const response = await read(client.get(`/api/projects/${projectId}/incidents`));
+    expect(response.incidents).toHaveLength(1);
+    expect(response.incidents[0]).toMatchObject({ status: "open", eventCount: 3, level: "error", service: "api", alertCount: 1 });
+  });
+
+  it("starts a new incident after the grouping window and can resolve it manually", async () => {
+    const now = Date.now();
+    await ingest({ events: [{ level: "critical", message: "Database unavailable", timestamp: new Date(now - 31 * 60_000).toISOString() }] });
+    await ingest({ events: [{ level: "critical", message: "Database unavailable", timestamp: new Date(now).toISOString() }] });
+
+    const client = browser();
+    await client.signInReady();
+    const all = await read(client.get(`/api/projects/${projectId}/incidents?status=all`));
+    expect(all.incidents).toHaveLength(2);
+    expect(all.incidents.filter((incident: { status: string }) => incident.status === "open")).toHaveLength(1);
+
+    const open = all.incidents.find((incident: { status: string }) => incident.status === "open");
+    expect(open).toBeTruthy();
+    const resolved = await client.post(`/api/projects/${projectId}/incidents/${open.id}/resolve`);
+    expect(resolved.status).toBe(200);
+    expect((await read(resolved)).incident.status).toBe("resolved");
+  });
+
+  it("delivers each queued alert once and leaves no duplicate after a successful send", async () => {
+    await ingest({ events: [{ level: "error", message: "Webhook test failure" }] });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(dispatchPendingAlerts(deps.db, "https://alerts.example.test/hook")).resolves.toEqual({ sent: 1, failed: 0 });
+      await expect(dispatchPendingAlerts(deps.db, "https://alerts.example.test/hook")).resolves.toEqual({ sent: 0, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[0] === "https://alerts.example.test/hook" ? fetchMock.mock.calls[0]?.[1]?.body : ""));
+      expect(body).toMatchObject({ type: "super_logs_incident", incident: { title: "Webhook test failure", alertId: 1 } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("requires the slug to delete a project", async () => {
