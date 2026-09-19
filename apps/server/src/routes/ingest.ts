@@ -66,7 +66,7 @@ export function ingestRoutes() {
 
       const started = performance.now();
       try {
-        insertEvents(db, key.projectId, accepted, receivedAt);
+        insertEvents(db, key.projectId, accepted, receivedAt, c.get("deps").config.alertCooldownMs);
         keys.touch(key.keyId, receivedAt);
       } catch (error) {
         metrics.ingestErrors++;

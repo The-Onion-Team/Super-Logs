@@ -79,6 +79,23 @@ export interface Stats {
   groups: ErrorGroup[];
 }
 
+export interface Incident {
+  id: string;
+  projectId: string;
+  fingerprint: string;
+  status: "open" | "resolved";
+  firstSeen: string;
+  lastSeen: string;
+  eventCount: number;
+  level: Level;
+  title: string;
+  message: string;
+  service: string | null;
+  route: string | null;
+  alertCount: number;
+  lastAlertAt: string | null;
+}
+
 export interface Facets {
   services: string[];
   environments: string[];

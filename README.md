@@ -342,6 +342,10 @@ Only `level` and `message` are required. Everything else is optional, and filter
 
 Every warning, error and critical event gets a **fingerprint**, built from the service, error type, message pattern and top stack frames. That's how the **Same problem** button finds every occurrence, even when ids and numbers differ.
 
+### Incidents and alerts
+
+Warnings, errors and critical events with the same fingerprint are grouped into an incident while they continue occurring within a 30-minute window. Quiet incidents resolve automatically, and the dashboard also allows manual resolution. Each incident queues one deduplicated alert per configured cooldown window. Set `SUPER_LOGS_ALERT_WEBHOOK_URL` to deliver redacted JSON incident notifications to your own webhook; leave it unset to keep the alert outbox local.
+
 ## ⚙️ Configuration
 
 Everything is set through environment variables, and every one is documented in [`.env.example`](.env.example).
@@ -355,6 +359,8 @@ Everything is set through environment variables, and every one is documented in 
 | `SUPER_LOGS_SESSION_TTL_HOURS` | `168` | How long an unused dashboard session stays valid. |
 | `SUPER_LOGS_INGEST_EVENTS_PER_MINUTE` | `6000` | Rate limit per ingest key. |
 | `SUPER_LOGS_TRUST_PROXY` | `true` | Read the client IP from `CF-Connecting-IP` / `X-Forwarded-For`. The IP is used for rate limits only. |
+| `SUPER_LOGS_ALERT_WEBHOOK_URL` | — | Optional JSON webhook for incident alerts. Alerts remain local when unset. |
+| `SUPER_LOGS_ALERT_COOLDOWN_MINUTES` | `15` | Minimum time between repeated alerts for one ongoing incident. |
 | `SUPER_LOGS_LOG_LEVEL` | `info` | Verbosity of Super-Logs' own logs. |
 | `SUPER_LOGS_DATA_DIR` | `/data` in Docker | Where the database lives. |
 
@@ -462,7 +468,7 @@ IDEA.md         the full product vision
 ## 🗺️ Roadmap
 
 - [x] **Phase 1 · Logging core**: ingestion, SDKs, storage, dashboard, auth, retention
-- [ ] **Phase 2 · Incidents & alerts**: group errors into incidents, health checks, alert rules, **Telegram** notifications with deduplication and cooldowns
+- [ ] **Phase 2 · Incidents & alerts**: incident grouping and generic webhook deduplication shipped; health checks, alert rules and **Telegram** notifications remain
 - [ ] **Phase 3 · AI analysis**: runs automatically on major incidents with a small open model (e.g. Qwen or Kimi) through any OpenAI-compatible endpoint, always keeping *observed evidence* separate from *inference*
 - [ ] **Phase 4 · User diagnostics**: a *"Report a problem"* flow that asks for consent, with a screenshot, the page trail and a link to the server events
 - [ ] **Phase 5 · Open-source hardening**: SDKs on npm, more examples, a security review

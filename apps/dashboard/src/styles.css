@@ -594,6 +594,76 @@ button.counter:hover {
   background: var(--error);
 }
 
+/* --- incidents ----------------------------------------------------------- */
+.incidents {
+  margin-bottom: 16px;
+}
+.section-heading h2 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.section-heading h2 .muted {
+  font-weight: 400;
+}
+.incident-list {
+  display: grid;
+  gap: 8px;
+}
+.incident-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--error);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.incident-card.incident-resolved {
+  border-left-color: var(--muted);
+  opacity: 0.8;
+}
+.incident-card-head,
+.incident-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.incident-card-head strong {
+  font-size: 13px;
+}
+.incident-card-head > .muted {
+  margin-left: auto;
+  font-size: 12px;
+}
+.incident-status {
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.incident-status-open {
+  color: var(--error);
+  background: var(--error-bg);
+}
+.incident-status-resolved {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.incident-message {
+  color: var(--muted);
+  margin: 5px 0 8px 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.incident-meta {
+  margin-left: 28px;
+  font-size: 11px;
+}
+.incident-meta button {
+  margin-left: auto;
+}
+
 .filters {
   display: flex;
   gap: 8px;

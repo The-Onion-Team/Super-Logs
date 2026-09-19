@@ -105,4 +105,41 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX audit_log_at ON audit_log(at DESC);
   `,
+  /* 2 — incidents and deduplicated alert outbox */ `
+  CREATE TABLE incidents (
+    id             TEXT PRIMARY KEY,
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    fingerprint    TEXT NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
+    first_seen_at  INTEGER NOT NULL,
+    last_seen_at   INTEGER NOT NULL,
+    event_count    INTEGER NOT NULL,
+    max_level      INTEGER NOT NULL,
+    created_at     INTEGER NOT NULL,
+    resolved_at    INTEGER
+  );
+  CREATE INDEX incidents_project_status ON incidents(project_id, status, last_seen_at DESC);
+  CREATE INDEX incidents_project_fingerprint ON incidents(project_id, fingerprint, last_seen_at DESC);
+  CREATE UNIQUE INDEX incidents_one_open_fingerprint ON incidents(project_id, fingerprint) WHERE status = 'open';
+
+  CREATE TABLE incident_events (
+    incident_id  TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    event_id     INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    PRIMARY KEY (incident_id, event_id),
+    UNIQUE (event_id)
+  );
+  CREATE INDEX incident_events_event ON incident_events(event_id);
+
+  CREATE TABLE incident_alerts (
+    id           INTEGER PRIMARY KEY,
+    incident_id  TEXT NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    dedupe_key   TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    sent_at      INTEGER,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT,
+    UNIQUE (incident_id, dedupe_key)
+  );
+  CREATE INDEX incident_alerts_pending ON incident_alerts(sent_at, created_at);
+  `,
 ];

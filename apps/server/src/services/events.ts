@@ -11,6 +11,7 @@ import {
 } from "@super-logs/shared";
 import { z } from "zod";
 import { transaction, type Db } from "../db/index.js";
+import { recordIncidentEventsWithinTransaction } from "./incidents.js";
 
 const short = z.string().trim().min(1).max(LIMITS.maxShortField);
 const optionalShort = z
@@ -130,7 +131,13 @@ function joinStacks(stack?: string, componentStack?: string): string | undefined
   return joined ? truncate(joined, LIMITS.maxStackLength) : undefined;
 }
 
-export function insertEvents(db: Db, projectId: string, events: { event: SuperLogsEvent; ts: number }[], receivedAt: number): void {
+export function insertEvents(
+  db: Db,
+  projectId: string,
+  events: { event: SuperLogsEvent; ts: number }[],
+  receivedAt: number,
+  alertCooldownMs?: number,
+): void {
   if (!events.length) return;
   const insert = db.prepare(`
     INSERT INTO events (
@@ -140,10 +147,11 @@ export function insertEvents(db: Db, projectId: string, events: { event: SuperLo
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   transaction(db, () => {
+    const incidentEvents: { id: number; fingerprint: string | null; level: number; ts: number }[] = [];
     for (const { event: e, ts } of events) {
       // Warnings and above are what incidents are built from (Phase 2).
       const fp = LEVEL_RANK[e.level] >= LEVEL_RANK.warning ? fingerprint(e) : null;
-      insert.run(
+      const result = insert.run(
         projectId,
         ts,
         receivedAt,
@@ -169,7 +177,9 @@ export function insertEvents(db: Db, projectId: string, events: { event: SuperLo
         json(e.tags),
         json(e.metadata),
       );
+      incidentEvents.push({ id: Number(result.lastInsertRowid), fingerprint: fp, level: LEVEL_RANK[e.level], ts });
     }
+    recordIncidentEventsWithinTransaction(db, projectId, incidentEvents, { alertCooldownMs, now: receivedAt });
   });
 }
 

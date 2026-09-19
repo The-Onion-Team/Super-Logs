@@ -5,6 +5,7 @@ import type { AppEnv } from "../app.js";
 import { metrics } from "../lib/metrics.js";
 import { audit, listAudit } from "../services/audit.js";
 import { eventFacets, eventQuerySchema, eventStats, getEvent, queryEvents } from "../services/events.js";
+import { closeStaleIncidents, getIncident, listIncidents, resolveIncident } from "../services/incidents.js";
 import {
   createKey,
   createProject,
@@ -18,6 +19,10 @@ import {
 import { csrf, requireAdmin, requireUser } from "./guards.js";
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(80) });
+const incidentQuerySchema = z.object({
+  status: z.enum(["open", "resolved", "all"]).default("open"),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
 
 /**
  * The stats payload aggregates over the whole window, and `node:sqlite` is
@@ -140,6 +145,38 @@ export function apiRoutes() {
     if (!getProject(db, c.req.param("id"))) return c.json({ error: "not_found" }, 404);
     const hours = Math.min(168, Math.max(1, Number(c.req.query("hours") ?? 24) || 24));
     return c.json(cachedStats(db, c.req.param("id"), hours));
+  });
+
+  // --- incidents -----------------------------------------------------------
+
+  app.get("/projects/:id/incidents", (c) => {
+    const { db } = c.get("deps");
+    const projectId = c.req.param("id");
+    if (!getProject(db, projectId)) return c.json({ error: "not_found" }, 404);
+    const parsed = incidentQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) return c.json({ error: "invalid_query" }, 400);
+    closeStaleIncidents(db);
+    return c.json({ incidents: listIncidents(db, projectId, parsed.data) });
+  });
+
+  app.get("/projects/:id/incidents/:incidentId", (c) => {
+    const { db } = c.get("deps");
+    closeStaleIncidents(db);
+    const incident = getIncident(db, c.req.param("id"), c.req.param("incidentId"));
+    return incident ? c.json({ incident }) : c.json({ error: "not_found" }, 404);
+  });
+
+  app.post("/projects/:id/incidents/:incidentId/resolve", (c) => {
+    const { db } = c.get("deps");
+    const projectId = c.req.param("id");
+    if (!resolveIncident(db, projectId, c.req.param("incidentId"))) return c.json({ error: "not_found" }, 404);
+    audit(db, "incident.resolved", {
+      userId: c.get("user").id,
+      actor: c.get("user").email,
+      target: c.req.param("incidentId"),
+      detail: { projectId },
+    });
+    return c.json({ incident: getIncident(db, projectId, c.req.param("incidentId")) });
   });
 
   // --- administration ------------------------------------------------------

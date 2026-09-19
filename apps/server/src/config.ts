@@ -27,6 +27,10 @@ const schema = z.object({
   SUPER_LOGS_INGEST_EVENTS_PER_MINUTE: z.coerce.number().int().min(1).default(6000),
   /** Read the client IP from Cloudflare / reverse-proxy headers. Only enable behind a proxy you control. */
   SUPER_LOGS_TRUST_PROXY: bool.default(true),
+  /** Optional JSON webhook for incident alerts. Unset keeps alerts local. */
+  SUPER_LOGS_ALERT_WEBHOOK_URL: z.url().optional(),
+  /** Minimum time between repeated alerts for one ongoing incident. */
+  SUPER_LOGS_ALERT_COOLDOWN_MINUTES: z.coerce.number().int().min(1).max(24 * 60).default(15),
   SUPER_LOGS_LOG_LEVEL: z.enum(["debug", "info", "warning", "error"]).default("info"),
 });
 
@@ -57,6 +61,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     retentionDays: e.SUPER_LOGS_RETENTION_DAYS,
     ingestEventsPerMinute: e.SUPER_LOGS_INGEST_EVENTS_PER_MINUTE,
     trustProxy: e.SUPER_LOGS_TRUST_PROXY,
+    alertWebhookUrl: e.SUPER_LOGS_ALERT_WEBHOOK_URL,
+    alertCooldownMs: e.SUPER_LOGS_ALERT_COOLDOWN_MINUTES * 60_000,
     logLevel: e.SUPER_LOGS_LOG_LEVEL,
   };
 }

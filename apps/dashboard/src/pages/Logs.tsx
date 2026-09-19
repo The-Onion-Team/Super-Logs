@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorMessage, type Facets, type Project, type Stats, type StoredEvent } from "../api";
+import { api, errorMessage, type Facets, type Incident, type Project, type Stats, type StoredEvent } from "../api";
 import { ErrorNote, LEVEL_ORDER, LevelBadge, Time } from "../components/bits";
 import { ErrorGroups } from "../components/ErrorGroups";
+import { Incidents } from "../components/Incidents";
 import { ErrorRate, Latency } from "../components/charts";
 import { EventDetail } from "../components/EventDetail";
 import { Histogram } from "../components/Histogram";
@@ -24,6 +25,7 @@ export function LogsPage({ project }: { project: Project }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [facets, setFacets] = useState<Facets | null>(null);
   const [live, setLive] = useState(true);
   const [search, setSearch] = useState(params.get("q") ?? "");
@@ -74,6 +76,14 @@ export function LogsPage({ project }: { project: Project }) {
     }
   }, [project.id]);
 
+  const loadIncidents = useCallback(async () => {
+    try {
+      setIncidents((await api<{ incidents: Incident[] }>(`/projects/${project.id}/incidents?status=open&limit=20`)).incidents);
+    } catch {
+      /* incidents are an enhancement to the log stream */
+    }
+  }, [project.id]);
+
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -93,9 +103,14 @@ export function LogsPage({ project }: { project: Project }) {
       if (document.visibilityState !== "visible") return;
       void load();
       void loadStats();
+      void loadIncidents();
     }, 5_000);
     return () => clearInterval(timer);
-  }, [live, load, loadStats]);
+  }, [live, load, loadStats, loadIncidents]);
+
+  useEffect(() => {
+    void loadIncidents();
+  }, [loadIncidents]);
 
   const loadMore = async () => {
     if (!cursor) return;
@@ -149,6 +164,18 @@ export function LogsPage({ project }: { project: Project }) {
         </section>
       )}
 
+      <Incidents
+        incidents={incidents}
+        onSelect={(fingerprint) => setParams({ fingerprint, level: undefined, exactLevel: undefined })}
+        onResolve={async (incidentId) => {
+          try {
+            await api(`/projects/${project.id}/incidents/${incidentId}/resolve`, { method: "POST", body: {} });
+            await loadIncidents();
+          } catch (err) {
+            setError(errorMessage(err));
+          }
+        }}
+      />
       {stats && <ErrorGroups groups={stats.groups} onSelect={(fingerprint) => setParams({ fingerprint, level: undefined, exactLevel: undefined })} />}
 
       <form
