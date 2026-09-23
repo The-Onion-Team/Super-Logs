@@ -12,4 +12,6 @@ export const metrics = {
   retentionLastRun: null as string | null,
   retentionLastError: null as string | null,
   loginFailures: 0,
+  alertsSent: 0,
+  alertsFailed: 0,
 };

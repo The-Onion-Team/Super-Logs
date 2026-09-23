@@ -1,5 +1,5 @@
 import { LIMITS, type IngestResult } from "@super-logs/shared";
-import { Hono } from "hono";
+import { Hono } from "hono/tiny";
 import { bodyLimit } from "hono/body-limit";
 import type { AppEnv } from "../app.js";
 import { log } from "../lib/log.js";
@@ -40,11 +40,11 @@ export function ingestRoutes() {
         return c.json({ error: "invalid_json" }, 400);
       }
       const batch = batchSchema.safeParse(body);
-      if (!batch.success) {
+      if (!batch.ok) {
         return c.json({ error: "invalid_batch", message: `Expected { events: [...] } with 1–${LIMITS.maxEventsPerBatch} events` }, 400);
       }
 
-      const granted = limits.ingest.take(key.keyId, batch.data.events.length);
+      const granted = limits.ingest.take(key.keyId, batch.value.events.length);
       if (granted === 0) {
         metrics.ingestRateLimited++;
         c.header("retry-after", "10");
@@ -54,7 +54,7 @@ export function ingestRoutes() {
       const receivedAt = Date.now();
       const accepted: Parameters<typeof insertEvents>[2] = [];
       const errors: NonNullable<IngestResult["errors"]> = [];
-      batch.data.events.forEach((raw, index) => {
+      batch.value.events.forEach((raw, index) => {
         if (index >= granted) {
           errors.push({ index, message: "rate limited" });
           return;
@@ -75,7 +75,7 @@ export function ingestRoutes() {
       }
       metrics.lastIngestMs = Math.round(performance.now() - started);
 
-      const rejected = batch.data.events.length - accepted.length;
+      const rejected = batch.value.events.length - accepted.length;
       metrics.eventsAccepted += accepted.length;
       metrics.eventsRejected += rejected;
       const result: IngestResult = { accepted: accepted.length, rejected, ...(errors.length ? { errors } : {}) };

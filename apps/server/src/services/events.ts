@@ -9,22 +9,29 @@ import {
   type Level,
   type SuperLogsEvent,
 } from "@super-logs/shared";
-import { z } from "zod";
+import * as v from "../lib/validate.js";
 import { transaction, type Db } from "../db/index.js";
 import { recordIncidentEventsWithinTransaction } from "./incidents.js";
 
-const short = z.string().trim().min(1).max(LIMITS.maxShortField);
-const optionalShort = z
-  .string()
-  .max(LIMITS.maxShortField * 4)
-  .transform((value) => truncate(value.trim(), LIMITS.maxShortField))
-  .optional();
-const correlationId = z.string().regex(REQUEST_ID_PATTERN, "must be 8–128 of [A-Za-z0-9._:-]").optional();
+/** Over-long short fields are cut rather than rejected: a long route is still a useful log line. */
+const optionalShort = v.optional(
+  v.map(v.string({ max: LIMITS.maxShortField * 4 }), (value) => truncate(value.trim(), LIMITS.maxShortField)),
+);
+const correlationId = v.optional(
+  v.string({ pattern: REQUEST_ID_PATTERN, patternMessage: "must be 8–128 of [A-Za-z0-9._:-]" }),
+);
+const tagKey = v.string({
+  trim: true,
+  min: 1,
+  max: LIMITS.maxShortField,
+  pattern: /^[\w.:-]+$/,
+  patternMessage: "tag keys are [A-Za-z0-9_.:-]",
+});
 
-export const eventSchema = z.object({
-  timestamp: z.string().max(40).optional(),
-  level: z.enum(LEVELS),
-  message: z.string().min(1).max(LIMITS.maxMessageLength * 10),
+export const eventSchema = v.object({
+  timestamp: v.optional(v.string({ max: 40 })),
+  level: v.enumOf(LEVELS),
+  message: v.string({ min: 1, max: LIMITS.maxMessageLength * 10 }),
   event: optionalShort,
   service: optionalShort,
   environment: optionalShort,
@@ -34,27 +41,29 @@ export const eventSchema = z.object({
   sessionId: correlationId,
   userId: optionalShort,
   route: optionalShort,
-  method: z.string().max(16).optional(),
-  httpStatus: z.number().int().min(0).max(999).optional(),
-  durationMs: z.number().min(0).max(86_400_000).optional(),
-  error: z
-    .object({
-      name: z.string().max(LIMITS.maxShortField * 4).optional(),
-      message: z.string().max(LIMITS.maxMessageLength * 10).optional(),
-      stack: z.string().max(LIMITS.maxStackLength * 4).optional(),
-      componentStack: z.string().max(LIMITS.maxStackLength * 4).optional(),
-    })
-    .optional(),
-  client: z.record(z.string().max(40), z.string().max(400)).optional(),
-  tags: z
-    .record(short.regex(/^[\w.:-]+$/, "tag keys are [A-Za-z0-9_.:-]"), z.string().max(LIMITS.maxShortField))
-    .refine((tags) => Object.keys(tags).length <= LIMITS.maxTags, `at most ${LIMITS.maxTags} tags`)
-    .optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  method: v.optional(v.string({ max: 16 })),
+  httpStatus: v.optional(v.number({ int: true, min: 0, max: 999 })),
+  durationMs: v.optional(v.number({ min: 0, max: 86_400_000 })),
+  error: v.optional(
+    v.object({
+      name: v.optional(v.string({ max: LIMITS.maxShortField * 4 })),
+      message: v.optional(v.string({ max: LIMITS.maxMessageLength * 10 })),
+      stack: v.optional(v.string({ max: LIMITS.maxStackLength * 4 })),
+      componentStack: v.optional(v.string({ max: LIMITS.maxStackLength * 4 })),
+    }),
+  ),
+  client: v.optional(v.record(v.string({ max: 40 }), v.string({ max: 400 }))),
+  tags: v.optional(
+    v.record(tagKey, v.string({ max: LIMITS.maxShortField }), {
+      maxEntries: LIMITS.maxTags,
+      maxEntriesMessage: `at most ${LIMITS.maxTags} tags`,
+    }),
+  ),
+  metadata: v.optional(v.record(v.string(), v.unknown)),
 });
 
-export const batchSchema = z.object({
-  events: z.array(z.unknown()).min(1).max(LIMITS.maxEventsPerBatch),
+export const batchSchema = v.object({
+  events: v.array(v.unknown, { min: 1, max: LIMITS.maxEventsPerBatch }),
 });
 
 /** How far an event's own timestamp may be from the receive time before we distrust it. */
@@ -92,11 +101,11 @@ const RANK_TO_LEVEL = new Map(Object.entries(LEVEL_RANK).map(([level, rank]) => 
 /** Validates, normalises and redacts one event. Returns an error message instead of throwing. */
 export function normalizeEvent(input: unknown, receivedAt: number): { ok: true; event: SuperLogsEvent; ts: number } | { ok: false; message: string } {
   const parsed = eventSchema.safeParse(input);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    return { ok: false, message: issue ? `${issue.path.join(".") || "event"}: ${issue.message}` : "invalid event" };
+  if (!parsed.ok) {
+    const issue = parsed.issues[0];
+    return { ok: false, message: issue ? `${issue.path || "event"}: ${issue.message}` : "invalid event" };
   }
-  const raw = parsed.data;
+  const raw = parsed.value;
   let ts = raw.timestamp ? Date.parse(raw.timestamp) : Number.NaN;
   let metadata = raw.metadata;
   if (Number.isNaN(ts) || ts > receivedAt + MAX_FUTURE_MS || ts < receivedAt - MAX_PAST_MS) {
@@ -191,27 +200,27 @@ function json(value: unknown): string | null {
 
 // --- queries ---------------------------------------------------------------
 
-export const eventQuerySchema = z.object({
-  level: z.enum(LEVELS).optional(),
+export const eventQuerySchema = v.object({
+  level: v.optional(v.enumOf(LEVELS)),
   /** Exact level instead of "this level and above". */
-  exactLevel: z.enum(["1", "true"]).optional(),
-  service: z.string().max(200).optional(),
-  environment: z.string().max(200).optional(),
-  route: z.string().max(400).optional(),
-  requestId: z.string().max(128).optional(),
-  sessionId: z.string().max(128).optional(),
-  userId: z.string().max(200).optional(),
-  event: z.string().max(200).optional(),
-  fingerprint: z.string().max(64).optional(),
+  exactLevel: v.optional(v.enumOf(["1", "true"])),
+  service: v.optional(v.string({ max: 200 })),
+  environment: v.optional(v.string({ max: 200 })),
+  route: v.optional(v.string({ max: 400 })),
+  requestId: v.optional(v.string({ max: 128 })),
+  sessionId: v.optional(v.string({ max: 128 })),
+  userId: v.optional(v.string({ max: 200 })),
+  event: v.optional(v.string({ max: 200 })),
+  fingerprint: v.optional(v.string({ max: 64 })),
   /** `key:value` */
-  tag: z.string().max(300).regex(/^[\w.:-]+:.+$/).optional(),
-  from: z.string().max(40).optional(),
-  to: z.string().max(40).optional(),
-  q: z.string().max(200).optional(),
-  cursor: z.string().regex(/^\d+:\d+$/).optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
+  tag: v.optional(v.string({ max: 300, pattern: /^[\w.:-]+:.+$/, patternMessage: "must be key:value" })),
+  from: v.optional(v.string({ max: 40 })),
+  to: v.optional(v.string({ max: 40 })),
+  q: v.optional(v.string({ max: 200 })),
+  cursor: v.optional(v.string({ pattern: /^\d+:\d+$/, patternMessage: "must be a cursor from a previous page" })),
+  limit: v.withDefault(v.number({ coerce: true, int: true, min: 1, max: 500 }), 100),
 });
-export type EventQuery = z.infer<typeof eventQuerySchema>;
+export type EventQuery = v.Infer<typeof eventQuerySchema>;
 
 interface EventRow {
   id: number;

@@ -4,11 +4,38 @@ import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/index.js";
 import { ensureAdmin } from "../src/services/auth.js";
 import { createKey, createProject } from "../src/services/projects.js";
+import { createUser } from "../src/services/auth.js";
+import { projectChannels } from "../src/services/channels.js";
 import { deleteExpiredEvents, ftsQuery } from "../src/services/events.js";
 import { dispatchPendingAlerts } from "../src/services/incidents.js";
+import { channelsFromConfig, webhookChannel } from "../src/services/alerts.js";
+import { formatTelegramMessage, telegramChannel } from "../src/services/telegram.js";
 
 const ORIGIN = "https://logs.example.com";
 const ADMIN = { email: "admin@example.com", password: "correct horse battery" };
+const HOOK = "https://alerts.example.test/hook";
+const TELEGRAM = "https://telegram.example.test";
+const BOT_TOKEN = "123456789:AAFakeTokenForTestsOnly-0123456789";
+const TELEGRAM_OPTIONS = {
+  botToken: BOT_TOKEN,
+  chatId: "-1001234567890",
+  minLevel: "warning",
+  threadId: 7,
+  publicOrigin: ORIGIN,
+  apiBaseUrl: TELEGRAM,
+} as const;
+
+/** A config with both channels on, pointed at the stubbed Telegram host. */
+const telegramConfig = () => ({
+  ...loadConfig({
+    SUPER_LOGS_PUBLIC_URL: ORIGIN,
+    SUPER_LOGS_DATA_DIR: "/tmp/unused",
+    SUPER_LOGS_ALERT_WEBHOOK_URL: HOOK,
+    SUPER_LOGS_TELEGRAM_BOT_TOKEN: BOT_TOKEN,
+    SUPER_LOGS_TELEGRAM_CHAT_ID: "-1001234567890",
+  }),
+  telegram: TELEGRAM_OPTIONS,
+});
 
 let deps: AppDeps;
 let app: ReturnType<typeof createApp>;
@@ -376,12 +403,125 @@ describe("dashboard API", () => {
     await ingest({ events: [{ level: "error", message: "Webhook test failure" }] });
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
+    const channels = [webhookChannel(HOOK)];
     try {
-      await expect(dispatchPendingAlerts(deps.db, "https://alerts.example.test/hook")).resolves.toEqual({ sent: 1, failed: 0 });
-      await expect(dispatchPendingAlerts(deps.db, "https://alerts.example.test/hook")).resolves.toEqual({ sent: 0, failed: 0 });
+      await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 1, failed: 0 });
+      await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 0, failed: 0 });
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[0] === "https://alerts.example.test/hook" ? fetchMock.mock.calls[0]?.[1]?.body : ""));
-      expect(body).toMatchObject({ type: "super_logs_incident", incident: { title: "Webhook test failure", alertId: 1 } });
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body).toMatchObject({
+        type: "super_logs_incident",
+        incident: { title: "Webhook test failure", alertId: 1, projectName: "FantaF1" },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("retries only the channel that failed, never resending on one that succeeded", async () => {
+    await ingest({ events: [{ level: "error", message: "Half-delivered failure" }] });
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).startsWith(TELEGRAM) ? new Response(null, { status: 502 }) : new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const channels = channelsFromConfig(telegramConfig());
+    try {
+      await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 1, failed: 1 });
+      // Telegram recovers; the webhook must not be asked a second time.
+      fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 1, failed: 0 });
+
+      const calls = fetchMock.mock.calls.map(([url]) => (String(url).startsWith(TELEGRAM) ? "telegram" : "webhook"));
+      expect(calls).toEqual(["webhook", "telegram", "telegram"]);
+      await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 0, failed: 0 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("gives up on an alert after five dispatch rounds", async () => {
+    await ingest({ events: [{ level: "error", message: "Never delivered" }] });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const channels = [webhookChannel(HOOK)];
+    try {
+      for (let round = 0; round < 5; round++) {
+        await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 0, failed: 1 });
+      }
+      await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 0, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      const row = deps.db.prepare("SELECT attempts, last_error FROM incident_alerts").get() as { attempts: number; last_error: string };
+      expect(row.attempts).toBe(5);
+      expect(row.last_error).toContain("webhook responded 500");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("settles a Telegram alert below its minimum level without sending it", async () => {
+    await ingest({ events: [{ level: "warning", message: "Only a warning" }] });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const channels = [telegramChannel({ ...TELEGRAM_OPTIONS, minLevel: "error" })];
+      await expect(dispatchPendingAlerts(deps.db, () => channels)).resolves.toEqual({ sent: 0, failed: 0 });
+      expect(fetchMock).not.toHaveBeenCalled();
+      // Settled, not left pending: a second round finds nothing to do.
+      expect((deps.db.prepare("SELECT sent_at FROM incident_alerts").get() as { sent_at: number }).sent_at).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sends a Telegram message with the error, its context and a link back", async () => {
+    await ingest({
+      events: [{ level: "critical", message: "boom", service: "api", route: "/checkout", error: { name: "PaymentError", message: "card <declined> & gone" } }],
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(dispatchPendingAlerts(deps.db, () => [telegramChannel(TELEGRAM_OPTIONS)])).resolves.toEqual({ sent: 1, failed: 0 });
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`${TELEGRAM}/bot${BOT_TOKEN}/sendMessage`);
+      const body = JSON.parse(String(init.body));
+      expect(body).toMatchObject({ chat_id: "-1001234567890", parse_mode: "HTML", message_thread_id: 7 });
+      expect(body.text).toContain("🚨 <b>PaymentError</b>");
+      // HTML mode: only & < > are escaped, so error text cannot break the message.
+      expect(body.text).toContain("card &lt;declined&gt; &amp; gone");
+      expect(body.text).toContain("<b>Project:</b> FantaF1");
+      expect(body.text).toContain("<b>Service:</b> api");
+      expect(body.text).toContain("<b>Route:</b> /checkout");
+      expect(body.text).toContain(`${ORIGIN}/projects/${projectId}/logs?fingerprint=`);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("explains a rejected Telegram chat instead of storing a bare status code", async () => {
+    await ingest({ events: [{ level: "error", message: "Bad chat" }] });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: false, description: "Bad Request: chat not found" }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(dispatchPendingAlerts(deps.db, () => [telegramChannel(TELEGRAM_OPTIONS)])).resolves.toEqual({ sent: 0, failed: 1 });
+      const row = deps.db.prepare("SELECT last_error FROM incident_alert_deliveries WHERE channel = 'telegram'").get() as { last_error: string };
+      expect(row.last_error).toContain("chat not found");
+      // The reason must not name an environment variable: the same channel can
+      // be configured from the dashboard, where that would misdirect entirely.
+      expect(row.last_error).toContain("make sure the bot has been started or added there");
+      expect(row.last_error).not.toContain("SUPER_LOGS_");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("treats a 200 with ok:false as a Telegram failure", async () => {
+    await ingest({ events: [{ level: "error", message: "Sneaky failure" }] });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, description: "message is too long" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(dispatchPendingAlerts(deps.db, () => [telegramChannel(TELEGRAM_OPTIONS)])).resolves.toEqual({ sent: 0, failed: 1 });
     } finally {
       vi.unstubAllGlobals();
     }
@@ -427,5 +567,278 @@ describe("storage", () => {
     // The full-text index follows deletions.
     const fts = deps.db.prepare("SELECT COUNT(*) AS n FROM events_fts WHERE events_fts MATCH 'old'").get() as { n: number };
     expect(fts.n).toBe(0);
+  });
+});
+
+describe("telegram formatting", () => {
+  const alert = {
+    alertId: 1,
+    id: "inc_1",
+    projectId: "prj_1",
+    projectName: "FantaF1",
+    fingerprint: "abcdef0123456789",
+    status: "open" as const,
+    level: "error" as const,
+    eventCount: 1200,
+    firstSeen: "2026-09-23T07:00:00.000Z",
+    lastSeen: "2026-09-23T07:30:00.000Z",
+    title: "PaymentError",
+    message: "card declined",
+    service: "api",
+    route: "/checkout",
+  };
+
+  it("stays inside Telegram's 4096-character limit however long the error is", () => {
+    const text = formatTelegramMessage({ ...alert, message: "x".repeat(50_000), title: "y".repeat(5_000) }, ORIGIN);
+    expect(text.length).toBeLessThanOrEqual(4096);
+    // The link survives truncation of the body.
+    expect(text).toContain("Open in Super-Logs");
+  });
+
+  it("keeps the budget when escaping expands the body fivefold", () => {
+    // 50k ampersands become 250k characters once escaped.
+    const text = formatTelegramMessage({ ...alert, message: "&".repeat(50_000) }, ORIGIN);
+    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text).toContain("Open in Super-Logs");
+    // Never a half-written entity at the cut.
+    expect(text).not.toMatch(/&[a-z]*…/i);
+  });
+
+  it("summarises a burst by count and duration", () => {
+    const text = formatTelegramMessage(alert, ORIGIN);
+    expect(text).toContain("<b>Events:</b> 1,200 over 30m · last 07:30:00 UTC");
+  });
+
+  it("does not repeat the message when it only echoes the title", () => {
+    const text = formatTelegramMessage({ ...alert, message: "PaymentError" }, ORIGIN);
+    expect(text).not.toContain("<pre>");
+  });
+});
+
+describe("telegram configuration", () => {
+  const env = (extra: Record<string, string>) => ({
+    SUPER_LOGS_PUBLIC_URL: ORIGIN,
+    SUPER_LOGS_DATA_DIR: "/tmp/unused",
+    ...extra,
+  });
+
+  it("refuses a bot token without a chat id, and the other way round", () => {
+    expect(() => loadConfig(env({ SUPER_LOGS_TELEGRAM_BOT_TOKEN: BOT_TOKEN }))).toThrow(/together, or neither/);
+    expect(() => loadConfig(env({ SUPER_LOGS_TELEGRAM_CHAT_ID: "-100123" }))).toThrow(/together, or neither/);
+  });
+
+  it("rejects a token that is not in BotFather's shape", () => {
+    expect(() => loadConfig(env({ SUPER_LOGS_TELEGRAM_BOT_TOKEN: "nope", SUPER_LOGS_TELEGRAM_CHAT_ID: "-100123" }))).toThrow(/BotFather/);
+  });
+
+  it("defaults to alerting from warning upwards", () => {
+    const config = loadConfig(env({ SUPER_LOGS_TELEGRAM_BOT_TOKEN: BOT_TOKEN, SUPER_LOGS_TELEGRAM_CHAT_ID: "-100123" }));
+    expect(config.telegram).toEqual({
+      botToken: BOT_TOKEN,
+      chatId: "-100123",
+      minLevel: "warning",
+      threadId: undefined,
+      apiBaseUrl: "https://api.telegram.org",
+    });
+    expect(channelsFromConfig(config).map((channel) => channel.name)).toEqual(["telegram"]);
+  });
+
+  it("leaves alerts local when nothing is configured", () => {
+    expect(loadConfig(env({})).telegram).toBeUndefined();
+    expect(channelsFromConfig(loadConfig(env({})))).toEqual([]);
+  });
+});
+
+describe("telegram channels configured from the dashboard", () => {
+  const put = (client: ReturnType<typeof browser>, body: unknown, project = projectId) =>
+    client.call(`/api/projects/${project}/notifications/telegram`, { method: "PUT", body: JSON.stringify(body) });
+
+  const connect = async (client: ReturnType<typeof browser>, over: Record<string, unknown> = {}, project = projectId) =>
+    put(client, { botToken: BOT_TOKEN, chatId: "-100555", minLevel: "warning", enabled: true, ...over }, project);
+
+  /** Channels resolved the way the housekeeping job resolves them. */
+  const resolver = () => (id: string) => projectChannels(deps.db, id, { ...deps.config, telegramApiBaseUrl: TELEGRAM });
+
+  it("stores a channel and never returns the bot token", async () => {
+    const client = browser();
+    await client.signInReady();
+    const saved = await read(connect(client));
+    expect(saved.channel).toMatchObject({ kind: "telegram", chatId: "-100555", enabled: true, minLevel: "warning", botId: "123456789" });
+    expect(JSON.stringify(saved)).not.toContain(BOT_TOKEN);
+
+    const listed = await read(client.get(`/api/projects/${projectId}/notifications`));
+    expect(listed.channels).toHaveLength(1);
+    expect(JSON.stringify(listed)).not.toContain(BOT_TOKEN);
+    // The secret is in the database, but only there.
+    const row = deps.db.prepare("SELECT settings FROM notification_channels").get() as { settings: string };
+    expect(JSON.parse(row.settings).botToken).toBe(BOT_TOKEN);
+  });
+
+  it("keeps the stored token when the form submits an empty one", async () => {
+    const client = browser();
+    await client.signInReady();
+    await connect(client);
+    const updated = await read(put(client, { botToken: "", chatId: "-100999", minLevel: "error", enabled: true }));
+    expect(updated.channel).toMatchObject({ chatId: "-100999", minLevel: "error", botId: "123456789" });
+    const row = deps.db.prepare("SELECT settings FROM notification_channels").get() as { settings: string };
+    expect(JSON.parse(row.settings).botToken).toBe(BOT_TOKEN);
+  });
+
+  it("refuses a first save with no token, and a malformed one", async () => {
+    const client = browser();
+    await client.signInReady();
+    expect((await put(client, { chatId: "-100555" })).status).toBe(400);
+    expect((await read(put(client, { botToken: "nope", chatId: "-100555" }))).message).toContain("BotFather");
+    expect((await read(put(client, { botToken: BOT_TOKEN, chatId: "not a chat" }))).message).toContain("@channelusername");
+    expect(deps.db.prepare("SELECT COUNT(*) AS n FROM notification_channels").get()).toMatchObject({ n: 0 });
+  });
+
+  it("is closed to non-administrators", async () => {
+    await createUser(deps.db, { email: "viewer@example.com", password: "a viewer passphrase", role: "viewer" });
+    const client = browser();
+    await client.call("/api/auth/login", { method: "POST", body: JSON.stringify({ email: "viewer@example.com", password: "a viewer passphrase" }) });
+    expect((await client.get(`/api/projects/${projectId}/notifications`)).status).toBe(403);
+    expect((await connect(client)).status).toBe(403);
+  });
+
+  it("delivers a project's incidents to that project's chat only", async () => {
+    const client = browser();
+    await client.signInReady();
+    await connect(client, { chatId: "-100AAA".replace("AAA", "111") });
+
+    const other = createProject(deps.db, "Other").id;
+    const otherKey = createKey(deps.db, other, "backend").secret;
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await ingest({ events: [{ level: "error", message: "Belongs to FantaF1" }] });
+      await ingest({ events: [{ level: "error", message: "Belongs to Other" }] }, otherKey);
+      // Both projects raised an incident; only one has a chat configured.
+      expect((deps.db.prepare("SELECT COUNT(*) AS n FROM incident_alerts").get() as { n: number }).n).toBe(2);
+
+      await expect(dispatchPendingAlerts(deps.db, resolver())).resolves.toEqual({ sent: 1, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.chat_id).toBe("-100111");
+      expect(body.text).toContain("Belongs to FantaF1");
+
+      // The other project's alert is settled rather than left pending for ever.
+      const pending = deps.db.prepare("SELECT COUNT(*) AS n FROM incident_alerts WHERE sent_at IS NULL").get() as { n: number };
+      expect(pending.n).toBe(0);
+      await expect(dispatchPendingAlerts(deps.db, resolver())).resolves.toEqual({ sent: 0, failed: 0 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not send while the channel is paused", async () => {
+    const client = browser();
+    await client.signInReady();
+    await connect(client, { enabled: false });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await ingest({ events: [{ level: "error", message: "Paused channel" }] });
+      await expect(dispatchPendingAlerts(deps.db, resolver())).resolves.toEqual({ sent: 0, failed: 0 });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sends a test message and remembers that the channel worked", async () => {
+    const client = browser();
+    await client.signInReady();
+    await connect(client);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      expect((await client.post(`/api/projects/${projectId}/notifications/telegram/test`)).status).toBe(200);
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.text).toContain("Test alert from Super-Logs");
+      expect((await read(client.get(`/api/projects/${projectId}/notifications`))).channels[0].lastOkAt).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports why a test failed, and stores it against the channel", async () => {
+    const client = browser();
+    await client.signInReady();
+    await connect(client);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, description: "Bad Request: chat not found" }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const failed = await client.post(`/api/projects/${projectId}/notifications/telegram/test`);
+      expect(failed.status).toBe(502);
+      expect((await read(failed)).message).toContain("chat not found");
+      expect((await read(client.get(`/api/projects/${projectId}/notifications`))).channels[0].lastError).toContain("chat not found");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lists the chats a bot can reach, so the id need not be looked up by hand", async () => {
+    const client = browser();
+    await client.signInReady();
+    const fetchMock = vi.fn(async (url: string) =>
+      String(url).endsWith("/getMe")
+        ? new Response(JSON.stringify({ ok: true, result: { username: "fantaf1_logs_bot" } }), { status: 200 })
+        : new Response(
+            JSON.stringify({
+              ok: true,
+              result: [
+                { message: { chat: { id: -100111, type: "supergroup", title: "FantaF1 alerts" } } },
+                { message: { chat: { id: -100111, type: "supergroup", title: "FantaF1 alerts" } } },
+                { message: { chat: { id: 4242, type: "private", first_name: "Mattia" } } },
+              ],
+            }),
+            { status: 200 },
+          ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const found = await read(client.post(`/api/projects/${projectId}/notifications/telegram/discover`, { botToken: BOT_TOKEN }));
+      expect(found.botUsername).toBe("fantaf1_logs_bot");
+      // Deduplicated: one entry per chat however many messages it sent.
+      expect(found.chats).toEqual([
+        { id: "-100111", type: "supergroup", name: "FantaF1 alerts" },
+        { id: "4242", type: "private", name: "Mattia" },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("explains a rejected token instead of listing nothing", async () => {
+    const client = browser();
+    await client.signInReady();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, description: "Unauthorized" }), { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const failed = await client.post(`/api/projects/${projectId}/notifications/telegram/discover`, { botToken: BOT_TOKEN });
+      expect(failed.status).toBe(502);
+      expect((await read(failed)).message).toContain("Unauthorized");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("removes the channel and stops sending", async () => {
+    const client = browser();
+    await client.signInReady();
+    await connect(client);
+    expect((await client.call(`/api/projects/${projectId}/notifications/telegram`, { method: "DELETE" })).status).toBe(200);
+    expect((await read(client.get(`/api/projects/${projectId}/notifications`))).channels).toEqual([]);
+    expect((await client.call(`/api/projects/${projectId}/notifications/telegram`, { method: "DELETE" })).status).toBe(404);
+  });
+
+  it("goes away with its project", async () => {
+    const client = browser();
+    await client.signInReady();
+    await connect(client);
+    await client.call(`/api/projects/${projectId}`, { method: "DELETE", body: JSON.stringify({ confirm: "fantaf1" }) });
+    expect(deps.db.prepare("SELECT COUNT(*) AS n FROM notification_channels").get()).toMatchObject({ n: 0 });
   });
 });

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import type { ComponentChildren } from "preact";
+import { useCallback, useEffect, useState } from "preact/hooks";
 import { api, onUnauthenticated, type Project, type User } from "./api";
 import { Layout } from "./components/Layout";
 import { Redirect, navigate, useLocation } from "./router";
@@ -61,7 +62,7 @@ export function App() {
     navigate("/", true);
   };
 
-  let page: React.ReactNode;
+  let page: ComponentChildren;
   const match = path.match(/^\/projects\/([^/]+)(?:\/(logs|settings))?\/?$/);
   if (projects === null) page = <div className="empty">Loading…</div>;
   else if (match) {

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "preact/hooks";
 import { api, errorMessage, type ApiKey, type Project, type User } from "../api";
 import { CopyButton, ErrorNote, relative } from "../components/bits";
+import { Notifications } from "../components/Notifications";
 import { Link, navigate } from "../router";
 
 export function ProjectsPage(props: { user: User; projects: Project[]; current?: Project; onChange: () => Promise<void> }) {
@@ -176,6 +177,8 @@ function ProjectSettings({ project, isAdmin, onChange }: { project: Project; isA
           </form>
         </>
       )}
+
+      {isAdmin && <Notifications projectId={project.id} />}
 
       <h3>Send events</h3>
       <Setup />

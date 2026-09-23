@@ -1,11 +1,21 @@
 import { statSync } from "node:fs";
-import { Hono } from "hono";
-import { z } from "zod";
+import { Hono } from "hono/tiny";
+import * as v from "../lib/validate.js";
 import type { AppEnv } from "../app.js";
 import { metrics } from "../lib/metrics.js";
 import { audit, listAudit } from "../services/audit.js";
 import { eventFacets, eventQuerySchema, eventStats, getEvent, queryEvents } from "../services/events.js";
 import { closeStaleIncidents, getIncident, listIncidents, resolveIncident } from "../services/incidents.js";
+import { TELEGRAM_API, discoverChats } from "../services/telegram.js";
+import {
+  deleteChannel,
+  getChannel,
+  listChannels,
+  saveChannel,
+  toAlertChannel,
+  toSummary,
+  type ChannelKind,
+} from "../services/channels.js";
 import {
   createKey,
   createProject,
@@ -18,10 +28,31 @@ import {
 } from "../services/projects.js";
 import { csrf, requireAdmin, requireUser } from "./guards.js";
 
-const nameSchema = z.object({ name: z.string().trim().min(1).max(80) });
-const incidentQuerySchema = z.object({
-  status: z.enum(["open", "resolved", "all"]).default("open"),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+const nameSchema = v.object({ name: v.string({ trim: true, min: 1, max: 80 }) });
+
+/**
+ * A Telegram channel as the dashboard submits it. The token is optional on
+ * update so the chat can be changed without retyping it; an empty string means
+ * the same thing, because that is what an untouched password field sends.
+ */
+const telegramChannelSchema = v.object({
+  enabled: v.withDefault(v.boolean(), true),
+  minLevel: v.withDefault(v.enumOf(["warning", "error", "critical"]), "warning"),
+  botToken: v.optional(
+    v.string({ trim: true, pattern: /^\d+:[\w-]{30,}$/, patternMessage: "must look like 123456789:AA… (from @BotFather)" }),
+  ),
+  chatId: v.string({ trim: true, min: 1, max: 100, pattern: /^(-?\d+|@[\w]{5,})$/, patternMessage: "must be a numeric chat id or @channelusername" }),
+  threadId: v.optional(v.number({ coerce: true, int: true, min: 1 })),
+});
+
+const discoverSchema = v.object({
+  botToken: v.optional(
+    v.string({ trim: true, pattern: /^\d+:[\w-]{30,}$/, patternMessage: "must look like 123456789:AA… (from @BotFather)" }),
+  ),
+});
+const incidentQuerySchema = v.object({
+  status: v.withDefault(v.enumOf(["open", "resolved", "all"]), "open"),
+  limit: v.withDefault(v.number({ coerce: true, int: true, min: 1, max: 100 }), 20),
 });
 
 /**
@@ -61,8 +92,8 @@ export function apiRoutes() {
   app.post("/projects", requireAdmin, async (c) => {
     const { db } = c.get("deps");
     const parsed = nameSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_name" }, 400);
-    const project = createProject(db, parsed.data.name);
+    if (!parsed.ok) return c.json({ error: "invalid_name" }, 400);
+    const project = createProject(db, parsed.value.name);
     audit(db, "project.created", { userId: c.get("user").id, actor: c.get("user").email, target: project.id, detail: { name: project.name } });
     return c.json({ project }, 201);
   });
@@ -70,9 +101,9 @@ export function apiRoutes() {
   app.patch("/projects/:id", requireAdmin, async (c) => {
     const { db } = c.get("deps");
     const parsed = nameSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_name" }, 400);
-    if (!renameProject(db, c.req.param("id"), parsed.data.name)) return c.json({ error: "not_found" }, 404);
-    audit(db, "project.renamed", { userId: c.get("user").id, actor: c.get("user").email, target: c.req.param("id"), detail: { name: parsed.data.name } });
+    if (!parsed.ok) return c.json({ error: "invalid_name" }, 400);
+    if (!renameProject(db, c.req.param("id"), parsed.value.name)) return c.json({ error: "not_found" }, 404);
+    audit(db, "project.renamed", { userId: c.get("user").id, actor: c.get("user").email, target: c.req.param("id"), detail: { name: parsed.value.name } });
     return c.json({ project: getProject(db, c.req.param("id")) });
   });
 
@@ -100,8 +131,8 @@ export function apiRoutes() {
     const projectId = c.req.param("id");
     if (!getProject(db, projectId)) return c.json({ error: "not_found" }, 404);
     const parsed = nameSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_name" }, 400);
-    const { key, secret } = createKey(db, projectId, parsed.data.name);
+    if (!parsed.ok) return c.json({ error: "invalid_name" }, 400);
+    const { key, secret } = createKey(db, projectId, parsed.value.name);
     audit(db, "api_key.created", { userId: c.get("user").id, actor: c.get("user").email, target: key.id, detail: { projectId, name: key.name, prefix: key.prefix } });
     return c.json({ key, secret }, 201);
   });
@@ -114,6 +145,120 @@ export function apiRoutes() {
     return c.json({ ok: true });
   });
 
+  // --- notification channels ----------------------------------------------
+
+  app.get("/projects/:id/notifications", requireAdmin, (c) => {
+    const { db, config } = c.get("deps");
+    const projectId = c.req.param("id");
+    if (!getProject(db, projectId)) return c.json({ error: "not_found" }, 404);
+    return c.json({
+      channels: listChannels(db, projectId).map(toSummary),
+      // Surfaced so a mirror, proxy or test double cannot masquerade as
+      // Telegram: without this, a "message sent" from somewhere that always
+      // answers ok looks exactly like a real delivery.
+      telegramApiBaseUrl: config.telegramApiBaseUrl === TELEGRAM_API ? null : config.telegramApiBaseUrl,
+    });
+  });
+
+  app.put("/projects/:id/notifications/telegram", requireAdmin, async (c) => {
+    const { db } = c.get("deps");
+    const projectId = c.req.param("id");
+    if (!getProject(db, projectId)) return c.json({ error: "not_found" }, 404);
+
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    // An untouched password field posts "", which means "keep what is stored".
+    if (body && body.botToken === "") delete body.botToken;
+    const parsed = telegramChannelSchema.safeParse(body);
+    if (!parsed.ok) {
+      const issue = parsed.issues[0];
+      return c.json({ error: "invalid_channel", field: issue?.path, message: issue?.message }, 400);
+    }
+
+    const saved = saveChannel(db, projectId, "telegram", parsed.value);
+    if (!saved) return c.json({ error: "bot_token_required", message: "Add the bot token from @BotFather to set this up." }, 400);
+    audit(db, "notification_channel.saved", {
+      userId: c.get("user").id,
+      actor: c.get("user").email,
+      target: saved.id,
+      // The token is never written to the audit log, only which chat it points at.
+      detail: { projectId, kind: "telegram", chatId: saved.settings.chatId, enabled: saved.enabled, minLevel: saved.minLevel },
+    });
+    return c.json({ channel: toSummary(saved) });
+  });
+
+  app.delete("/projects/:id/notifications/:kind", requireAdmin, (c) => {
+    const { db } = c.get("deps");
+    const projectId = c.req.param("id");
+    const kind = c.req.param("kind") as ChannelKind;
+    if (!deleteChannel(db, projectId, kind)) return c.json({ error: "not_found" }, 404);
+    audit(db, "notification_channel.deleted", {
+      userId: c.get("user").id,
+      actor: c.get("user").email,
+      detail: { projectId, kind },
+    });
+    return c.json({ ok: true });
+  });
+
+  /**
+   * Looks up which chats a bot can post to. This is the step that otherwise
+   * means reading raw `getUpdates` JSON by hand, so the dashboard offers the
+   * answer as buttons instead. Nothing is stored: the token is only borrowed
+   * for the lookup, and a typo never reaches the database.
+   */
+  app.post("/projects/:id/notifications/telegram/discover", requireAdmin, async (c) => {
+    const { db, config } = c.get("deps");
+    const projectId = c.req.param("id");
+    if (!getProject(db, projectId)) return c.json({ error: "not_found" }, 404);
+
+    const body = (await c.req.json().catch(() => null)) as { botToken?: unknown } | null;
+    const supplied = discoverSchema.safeParse(body ?? {});
+    if (!supplied.ok) {
+      const issue = supplied.issues[0];
+      return c.json({ error: "invalid_channel", message: issue?.message }, 400);
+    }
+    // Fall back to the stored token, so "Find my chats" works on a saved
+    // channel without the operator digging the token out again.
+    const botToken = supplied.value.botToken ?? getChannel(db, projectId, "telegram")?.settings.botToken;
+    if (!botToken) return c.json({ error: "bot_token_required" }, 400);
+
+    const result = await discoverChats(botToken, config.telegramApiBaseUrl);
+    if (!result.ok) return c.json({ error: "discover_failed", message: result.message }, 502);
+    return c.json({ botUsername: result.botUsername, chats: result.chats });
+  });
+
+  /** Sends a real message through the stored settings, so setup can be proven before an incident. */
+  app.post("/projects/:id/notifications/:kind/test", requireAdmin, async (c) => {
+    const { db, config } = c.get("deps");
+    const projectId = c.req.param("id");
+    const project = getProject(db, projectId);
+    if (!project) return c.json({ error: "not_found" }, 404);
+    const channel = getChannel(db, projectId, c.req.param("kind") as ChannelKind);
+    if (!channel) return c.json({ error: "not_found" }, 404);
+
+    const now = new Date().toISOString();
+    try {
+      await toAlertChannel(db, channel, config).send({
+        alertId: 0,
+        id: "inc_test",
+        projectId,
+        projectName: project.name,
+        fingerprint: "testtesttesttest",
+        status: "open",
+        level: channel.minLevel,
+        eventCount: 1,
+        firstSeen: now,
+        lastSeen: now,
+        title: "Test alert from Super-Logs",
+        message: "If you can read this, incident alerts for this project will arrive here.",
+        service: null,
+        route: null,
+      });
+      return c.json({ ok: true });
+    } catch (error) {
+      return c.json({ error: "send_failed", message: error instanceof Error ? error.message : String(error) }, 502);
+    }
+  });
+
   // --- events --------------------------------------------------------------
 
   app.get("/projects/:id/events", (c) => {
@@ -121,11 +266,11 @@ export function apiRoutes() {
     const projectId = c.req.param("id");
     if (!getProject(db, projectId)) return c.json({ error: "not_found" }, 404);
     const parsed = eventQuerySchema.safeParse(c.req.query());
-    if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      return c.json({ error: "invalid_query", message: issue ? `${issue.path.join(".")}: ${issue.message}` : undefined }, 400);
+    if (!parsed.ok) {
+      const issue = parsed.issues[0];
+      return c.json({ error: "invalid_query", message: issue ? `${issue.path}: ${issue.message}` : undefined }, 400);
     }
-    return c.json(queryEvents(db, projectId, parsed.data));
+    return c.json(queryEvents(db, projectId, parsed.value));
   });
 
   app.get("/projects/:id/events/:eventId{[0-9]+}", (c) => {
@@ -154,9 +299,9 @@ export function apiRoutes() {
     const projectId = c.req.param("id");
     if (!getProject(db, projectId)) return c.json({ error: "not_found" }, 404);
     const parsed = incidentQuerySchema.safeParse(c.req.query());
-    if (!parsed.success) return c.json({ error: "invalid_query" }, 400);
+    if (!parsed.ok) return c.json({ error: "invalid_query" }, 400);
     closeStaleIncidents(db);
-    return c.json({ incidents: listIncidents(db, projectId, parsed.data) });
+    return c.json({ incidents: listIncidents(db, projectId, parsed.value) });
   });
 
   app.get("/projects/:id/incidents/:incidentId", (c) => {

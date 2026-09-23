@@ -4,6 +4,10 @@ import { defineConfig } from "vitest/config";
 const src = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
 export default defineConfig({
+  // Note: Vitest sets its own oxc transform options, so an `esbuild` block
+  // here would be silently ignored. Dashboard tests declare
+  // `/** @jsxImportSource preact */` per file instead, which also keeps the
+  // browser SDK's React entry point compiling against real React.
   resolve: {
     // Tests run against the sources, never against a stale build.
     alias: {
@@ -13,6 +17,6 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["packages/*/test/**/*.test.ts", "apps/*/test/**/*.test.ts"],
+    include: ["packages/*/test/**/*.test.{ts,tsx}", "apps/*/test/**/*.test.{ts,tsx}"],
   },
 });

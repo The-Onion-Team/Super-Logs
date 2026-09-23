@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import type { ComponentChildren } from "preact";
+import { useCallback, useEffect, useState } from "preact/hooks";
 
 /** A few lines of history-API routing; the dashboard has only a handful of screens. */
 export function navigate(to: string, replace = false): void {
@@ -33,7 +34,7 @@ export function useQueryState(): [URLSearchParams, (next: Record<string, string 
   return [search, update];
 }
 
-export function Link(props: { to: string; className?: string; children: React.ReactNode; title?: string }) {
+export function Link(props: { to: string; className?: string; children: ComponentChildren; title?: string }) {
   return (
     <a
       href={props.to}

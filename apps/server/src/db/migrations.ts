@@ -142,4 +142,30 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX incident_alerts_pending ON incident_alerts(sent_at, created_at);
   `,
+  /* 3 — per-channel alert delivery, so one channel's retry cannot resend another's */ `
+  CREATE TABLE incident_alert_deliveries (
+    alert_id    INTEGER NOT NULL REFERENCES incident_alerts(id) ON DELETE CASCADE,
+    channel     TEXT NOT NULL,
+    sent_at     INTEGER,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    last_error  TEXT,
+    PRIMARY KEY (alert_id, channel)
+  );
+  `,
+  /* 4 — notification channels configured from the dashboard, one per kind per project */ `
+  CREATE TABLE notification_channels (
+    id          TEXT PRIMARY KEY,
+    project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL CHECK (kind IN ('telegram')),
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    min_level   TEXT NOT NULL CHECK (min_level IN ('warning', 'error', 'critical')),
+    -- Kind-specific JSON. For telegram: botToken, chatId and an optional threadId.
+    settings    TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    last_ok_at  INTEGER,
+    last_error  TEXT,
+    UNIQUE (project_id, kind)
+  );
+  `,
 ];
