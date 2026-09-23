@@ -991,6 +991,142 @@ td.actions {
   user-select: all;
   overflow-wrap: anywhere;
 }
+.warn-note {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+.hint-note {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  max-width: 62ch;
+  font-size: 0.92em;
+}
+
+/* --- notification channels --- */
+.notifications {
+  margin: 24px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.notifications h3 {
+  margin-top: 0;
+}
+.notifications > p.muted {
+  margin-top: 0;
+  max-width: 62ch;
+}
+.channel-state {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.channel-state .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  margin-top: 6px;
+}
+.dot-ok {
+  background: var(--ok);
+}
+.dot-bad {
+  background: var(--error);
+}
+.dot-off {
+  background: var(--muted);
+}
+.small-text {
+  font-size: 0.86em;
+  margin-top: 2px;
+}
+.setup-help {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 8px 12px;
+}
+.setup-help summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.setup-steps {
+  margin: 10px 0 4px;
+  padding-left: 20px;
+  max-width: 68ch;
+}
+.setup-steps li {
+  margin-bottom: 8px;
+}
+.setup-steps ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.channel-form {
+  display: grid;
+  gap: 14px;
+  max-width: 460px;
+  margin-top: 12px;
+}
+.channel-form label {
+  display: grid;
+  gap: 4px;
+}
+.channel-form label > span {
+  font-weight: 600;
+}
+.channel-form small {
+  font-size: 0.84em;
+}
+.channel-form label.checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.channel-form label.checkbox > span {
+  font-weight: 400;
+}
+.channel-form button[type="submit"] {
+  justify-self: start;
+}
+.find-chats {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin-top: -4px;
+}
+.found-chats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.found-chats button code {
+  opacity: 0.75;
+}
+.channel-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
 .setup {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));

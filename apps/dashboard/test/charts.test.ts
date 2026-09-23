@@ -1,5 +1,5 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "preact";
+import { renderToStaticMarkup } from "preact-render-to-string";
 import { describe, expect, it } from "vitest";
 import type { LatencyBucket } from "../src/api";
 import { ErrorRate, Latency } from "../src/components/charts";

@@ -25,6 +25,21 @@ export interface ApiKey {
   revokedAt: string | null;
 }
 
+export interface NotificationChannel {
+  id: string;
+  kind: "telegram";
+  enabled: boolean;
+  minLevel: "warning" | "error" | "critical";
+  /** The public half of the bot token; the secret half never leaves the server. */
+  botId: string | null;
+  chatId: string;
+  threadId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  lastOkAt: string | null;
+  lastError: string | null;
+}
+
 export interface StoredEvent {
   id: number;
   timestamp: string;
@@ -158,6 +173,8 @@ const MESSAGES: Record<string, string> = {
   confirmation_required: "Type the project slug to confirm.",
   forbidden: "Only administrators can do that.",
   csrf_rejected: "The request was blocked. Reload the page and try again.",
+  bot_token_required: "Paste the bot token from @BotFather to finish setting this up.",
+  send_failed: "Telegram would not accept the message.",
 };
 
 export function errorMessage(error: unknown): string {

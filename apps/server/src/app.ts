@@ -1,4 +1,5 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono/tiny";
+import type { Context } from "hono";
 import { secureHeaders } from "hono/secure-headers";
 import type { Config } from "./config.js";
 import type { Db } from "./db/index.js";

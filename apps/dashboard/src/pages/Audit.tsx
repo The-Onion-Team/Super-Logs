@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState } from "preact/hooks";
 import { api, errorMessage, type AuditEntry } from "../api";
 import { ErrorNote, Time } from "../components/bits";
 

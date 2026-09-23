@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import type { Project, User } from "../api";
 import { Link, navigate } from "../router";
 import { BrandMark } from "./bits";
@@ -7,7 +8,7 @@ export function Layout(props: {
   projects: Project[];
   path: string;
   onSignOut: () => void;
-  children: React.ReactNode;
+  children: ComponentChildren;
 }) {
   const current = props.path.match(/^\/projects\/([^/]+)/)?.[1];
   const active = (prefix: string) => (props.path.startsWith(prefix) ? "active" : undefined);
@@ -25,7 +26,7 @@ export function Layout(props: {
             <span className="visually-hidden">Project</span>
             <select
               value={current ?? ""}
-              onChange={(event) => navigate(`/projects/${event.target.value}/logs`)}
+              onChange={(event) => navigate(`/projects/${event.currentTarget.value}/logs`)}
             >
               {!current && <option value="">Choose a project</option>}
               {props.projects.map((project) => (

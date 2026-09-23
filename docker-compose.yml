@@ -13,7 +13,7 @@ services:
       - "127.0.0.1:3400:3000"
     volumes:
       - super-logs-data:/data
-    # Measured footprint is about 90 MB RSS; this is a ceiling, not a target.
+    # Measured: ~63 MB RSS at rest, ~82 MB serving traffic. This is a ceiling, not a target.
     mem_limit: 256m
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]

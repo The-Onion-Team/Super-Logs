@@ -1,8 +1,11 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  plugins: [react()],
+  // Preact, imported directly rather than aliased from "react": the dashboard
+  // needs only hooks, StrictMode and createRoot, and this keeps ~61 KB gzip of
+  // React out of the bundle. No @preact/preset-vite either — it pulls in Babel
+  // (~15 MB of dev dependencies) purely for Fast Refresh.
+  esbuild: { jsx: "automatic", jsxImportSource: "preact" },
   build: {
     outDir: "dist",
     sourcemap: false,

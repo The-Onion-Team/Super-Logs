@@ -1,5 +1,5 @@
-import { Hono } from "hono";
-import { z } from "zod";
+import { Hono } from "hono/tiny";
+import * as v from "../lib/validate.js";
 import { clientIp, type AppEnv } from "../app.js";
 import { metrics } from "../lib/metrics.js";
 import { audit } from "../services/audit.js";
@@ -13,14 +13,14 @@ import {
 } from "../services/auth.js";
 import { clearSessionCookie, csrf, requireUser, setSessionCookie } from "./guards.js";
 
-const loginSchema = z.object({
-  email: z.string().trim().max(320),
-  password: z.string().max(1024),
+const loginSchema = v.object({
+  email: v.string({ trim: true, max: 320 }),
+  password: v.string({ max: 1024 }),
 });
 
-const passwordSchema = z.object({
-  currentPassword: z.string().max(1024),
-  newPassword: z.string().max(1024),
+const passwordSchema = v.object({
+  currentPassword: v.string({ max: 1024 }),
+  newPassword: v.string({ max: 1024 }),
 });
 
 export function authRoutes() {
@@ -30,8 +30,8 @@ export function authRoutes() {
   app.post("/login", async (c) => {
     const { db, config, limits } = c.get("deps");
     const parsed = loginSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
-    const { email, password } = parsed.data;
+    if (!parsed.ok) return c.json({ error: "invalid_request" }, 400);
+    const { email, password } = parsed.value;
     const ip = clientIp(c);
     const emailKey = email.toLowerCase();
 
@@ -71,10 +71,10 @@ export function authRoutes() {
     const { db, limits } = c.get("deps");
     const user = c.get("user");
     const parsed = passwordSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+    if (!parsed.ok) return c.json({ error: "invalid_request" }, 400);
     if (!limits.loginByEmail.peek(user.email)) return c.json({ error: "too_many_attempts" }, 429);
 
-    const result = await changePassword(db, user.id, parsed.data.currentPassword, parsed.data.newPassword);
+    const result = await changePassword(db, user.id, parsed.value.currentPassword, parsed.value.newPassword);
     if (result === "wrong-password") {
       limits.loginByEmail.take(user.email);
       return c.json({ error: "wrong_password" }, 400);

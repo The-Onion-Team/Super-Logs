@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
-import type { Hono } from "hono";
+import type { Hono } from "hono/tiny";
 import type { AppEnv } from "../app.js";
 import { log } from "../lib/log.js";
 

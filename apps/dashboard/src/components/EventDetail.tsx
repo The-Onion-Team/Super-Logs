@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import type { ComponentChildren } from "preact";
+import { useEffect, useState } from "preact/hooks";
 import { api, errorMessage, type StoredEvent } from "../api";
 import { CopyButton, ErrorNote, LevelBadge, Time } from "./bits";
 
@@ -50,7 +51,7 @@ function Body({ event, onFilter }: { event: StoredEvent; onFilter: FilterFn }) {
     ["Session", "sessionId", event.sessionId],
     ["User", "userId", event.userId],
   ];
-  const facts: [string, React.ReactNode][] = [
+  const facts: [string, ComponentChildren][] = [
     ["Time", <Time iso={event.timestamp} />],
     ["Service", event.service],
     ["Environment", event.environment],

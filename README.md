@@ -14,7 +14,8 @@
   <img alt="sdk license" src="https://img.shields.io/badge/SDKs-MIT-3fbf74?style=flat-square&labelColor=0e1013">
   <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A5%2022.13-3fbf74?style=flat-square&labelColor=0e1013">
   <img alt="docker" src="https://img.shields.io/badge/docker-one%20container-5b8ff9?style=flat-square&labelColor=0e1013">
-  <img alt="ram" src="https://img.shields.io/badge/RAM-~90%20MB-8d96a3?style=flat-square&labelColor=0e1013">
+  <img alt="ram" src="https://img.shields.io/badge/RAM-63--85%20MB-8d96a3?style=flat-square&labelColor=0e1013">
+  <img alt="dashboard" src="https://img.shields.io/badge/dashboard-19%20KB%20gzip-8d96a3?style=flat-square&labelColor=0e1013">
 </p>
 
 <p align="center">
@@ -28,7 +29,7 @@
 ---
 
 <p align="center">
-  <img src="docs/img/logs-light.png" alt="The Super-Logs log stream: counters, hourly chart, filters and a live table of events" width="100%">
+  <img src="docs/img/logs-light.webp" alt="The Super-Logs log stream: counters, hourly chart, filters and a live table of events" width="100%">
 </p>
 
 ## 🤔 Why Super-Logs?
@@ -44,7 +45,7 @@ SaaS tools answer this well, but they get expensive, and they keep your users' d
 
 | | |
 |---|---|
-| 🪶 **Tiny** | One Node process, one SQLite file, about 90 MB of RAM, 4 production dependencies. |
+| 🪶 **Tiny** | One Node process, one SQLite file. About 63 MB of RAM at rest and ~82 MB serving traffic. The server ships as a single bundled file — no `node_modules` in the image at all — and the dashboard is 19 KB gzipped. |
 | 🔗 **Correlated** | The browser SDK adds an `x-request-id` header to your own requests, and the server SDK picks it up. The browser's *"request failed"* and the server's stack trace land side by side. |
 | 🛡️ **Never hurts your app** | Logging calls never block and never throw. If Super-Logs is down, your app doesn't notice. |
 | 🔒 **Private by default** | Passwords, tokens, cookies, API keys and card numbers are removed *before* they leave your app, and again on arrival. |
@@ -55,11 +56,11 @@ SaaS tools answer this well, but they get expensive, and they keep your users' d
 <br>
 <table>
 <tr>
-<td width="68%"><img src="docs/img/logs-dark.png" alt="Log stream in dark mode"></td>
-<td width="32%"><img src="docs/img/mobile.png" alt="Log stream on a phone"></td>
+<td width="68%"><img src="docs/img/logs-dark.webp" alt="Log stream in dark mode"></td>
+<td width="32%"><img src="docs/img/mobile.webp" alt="Log stream on a phone"></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/img/projects.png" alt="Projects, ingest keys and setup snippets"></td>
+<td colspan="2"><img src="docs/img/projects.webp" alt="Projects, ingest keys and setup snippets"></td>
 </tr>
 </table>
 </details>
@@ -90,16 +91,21 @@ SaaS tools answer this well, but they get expensive, and they keep your users' d
 - Event details with **same request / same session / same problem** buttons
 - Projects and keys, audit log, system health, dark mode, works on phones
 
+**🚨 Incidents & alerts**
+- Repeated errors grouped into one incident by fingerprint
+- One deduplicated alert per cooldown window
+- **Telegram** notifications, set up per project in the dashboard
+- Per-channel retry, so a failure never sends a duplicate
+
 **🧹 Housekeeping**
 - Retention: old events are deleted automatically
-- Error fingerprints, ready for incident grouping
 
 </td>
 </tr>
 </table>
 
 <p align="center">
-  <img src="docs/img/event-detail.png" alt="Event details: the error with its stack trace and cause, tags, and redacted metadata" width="100%">
+  <img src="docs/img/event-detail.webp" alt="Event details: the error with its stack trace and cause, tags, and redacted metadata" width="100%">
   <br><sub>One click on an event shows its stack trace, its cause chain, and one-click pivots to everything else in the same request. Note the <code>apiKey</code>, redacted before it was stored.</sub>
 </p>
 
@@ -130,7 +136,7 @@ flowchart LR
 3. **Super-Logs** validates, redacts, fingerprints and stores each event. The dashboard shows it within seconds.
 
 <p align="center">
-  <img src="docs/img/request-trace.png" alt="Every event of one request: the browser's failed request, the server error and the slow-response warning" width="100%">
+  <img src="docs/img/request-trace.webp" alt="Every event of one request: the browser's failed request, the server error and the slow-response warning" width="100%">
   <br><sub><b>One request, three events, two services.</b> The browser's failed POST, the server's payment timeout, and the slow-response warning, found with one click.</sub>
 </p>
 
@@ -344,7 +350,55 @@ Every warning, error and critical event gets a **fingerprint**, built from the s
 
 ### Incidents and alerts
 
-Warnings, errors and critical events with the same fingerprint are grouped into an incident while they continue occurring within a 30-minute window. Quiet incidents resolve automatically, and the dashboard also allows manual resolution. Each incident queues one deduplicated alert per configured cooldown window. Set `SUPER_LOGS_ALERT_WEBHOOK_URL` to deliver redacted JSON incident notifications to your own webhook; leave it unset to keep the alert outbox local.
+Warnings, errors and critical events with the same fingerprint are grouped into an incident while they continue occurring within a 30-minute window. Quiet incidents resolve automatically, and the dashboard also allows manual resolution. Each incident queues one deduplicated alert per configured cooldown window.
+
+Alerts are then delivered to every channel you turn on. Delivery is tracked per channel and retried up to five times, so a channel that is down never causes a duplicate on one that already succeeded. With no channel configured, the outbox simply stays local.
+
+- **Generic JSON webhook** — set `SUPER_LOGS_ALERT_WEBHOOK_URL` to receive redacted incident JSON at your own endpoint.
+- **Telegram** — set it up per project in the dashboard, or with `SUPER_LOGS_TELEGRAM_*` for every project at once.
+
+#### 📨 Telegram notifications
+
+You get a message like this the moment a problem starts, with a link straight to the events behind it:
+
+> 🔴 **PaymentError**
+> ```
+> Timed out after 5000ms calling provider <stripe> & no retry left
+> ```
+> **Project:** FantaF1
+> **Service:** api
+> **Route:** /api/checkout
+> **Events:** 47 over 30m · last 07:09:54 UTC
+> **Fingerprint:** 9f2c1ab77de4
+>
+> [Open in Super-Logs →](#)
+
+**Set it up in the dashboard** — *Projects → your project → Settings → Telegram alerts*:
+
+1. Message [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token.
+2. Add the bot wherever you want alerts (a group works best) and send one message there — Telegram hides a chat until the bot has seen one.
+3. Paste the token and press **Find my chats**. Super-Logs asks Telegram which chats the bot can reach and offers them as buttons, so you never have to read `getUpdates` JSON.
+4. Pick how much you want to hear about, save, and press **Send test message**.
+
+The panel then shows which bot and chat are connected, when the last message went out, and the reason if one was rejected. The token is stored on your server and never sent back to the browser — the form shows only the bot id, and leaving the field empty keeps the stored token.
+
+<details>
+<summary><b>Prefer environment variables?</b> They still work, and apply to every project.</summary>
+<br>
+
+```bash
+SUPER_LOGS_TELEGRAM_BOT_TOKEN=123456789:AAExample-TokenFromBotFather
+SUPER_LOGS_TELEGRAM_CHAT_ID=-1001234567890
+SUPER_LOGS_TELEGRAM_MIN_LEVEL=error   # warning (default) | error | critical
+```
+
+To find the chat id by hand, open `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy `result[0].message.chat.id`. Group ids are negative; a public channel can be given as `@channelusername`.
+
+Environment channels alert for **every** project; a channel added in the dashboard alerts for **that** project. Set both and an incident goes to both, each retried independently.
+
+</details>
+
+Messages are sent with Telegram's HTML mode, so an error full of `.`, `-` or `_` can never break formatting, and everything that reaches Telegram has already been through the same redaction as the dashboard. If a message is rejected, the reason is stored on the alert and logged — a wrong chat id reads *"telegram chat not found: check SUPER_LOGS_TELEGRAM_CHAT_ID, and send the bot a message first"* rather than a bare `400`.
 
 ## ⚙️ Configuration
 
@@ -361,6 +415,11 @@ Everything is set through environment variables, and every one is documented in 
 | `SUPER_LOGS_TRUST_PROXY` | `true` | Read the client IP from `CF-Connecting-IP` / `X-Forwarded-For`. The IP is used for rate limits only. |
 | `SUPER_LOGS_ALERT_WEBHOOK_URL` | — | Optional JSON webhook for incident alerts. Alerts remain local when unset. |
 | `SUPER_LOGS_ALERT_COOLDOWN_MINUTES` | `15` | Minimum time between repeated alerts for one ongoing incident. |
+| `SUPER_LOGS_TELEGRAM_BOT_TOKEN` | — | Bot token from [@BotFather](https://t.me/BotFather), for alerts on *every* project. Set together with the chat id, or not at all. Per-project setup lives in the dashboard instead. |
+| `SUPER_LOGS_TELEGRAM_CHAT_ID` | — | Where alerts go: a numeric chat id (negative for groups) or `@channelusername`. |
+| `SUPER_LOGS_TELEGRAM_MIN_LEVEL` | `warning` | Incidents below this level are not sent to Telegram. |
+| `SUPER_LOGS_TELEGRAM_THREAD_ID` | — | Topic id, for forum-style supergroups. |
+| `SUPER_LOGS_TELEGRAM_API_BASE_URL` | `https://api.telegram.org` | A mirror or proxy, where Telegram is blocked or slow. |
 | `SUPER_LOGS_LOG_LEVEL` | `info` | Verbosity of Super-Logs' own logs. |
 | `SUPER_LOGS_DATA_DIR` | `/data` in Docker | Where the database lives. |
 
@@ -468,7 +527,7 @@ IDEA.md         the full product vision
 ## 🗺️ Roadmap
 
 - [x] **Phase 1 · Logging core**: ingestion, SDKs, storage, dashboard, auth, retention
-- [ ] **Phase 2 · Incidents & alerts**: incident grouping and generic webhook deduplication shipped; health checks, alert rules and **Telegram** notifications remain
+- [ ] **Phase 2 · Incidents & alerts**: incident grouping, alert deduplication, generic webhook and **Telegram** notifications shipped; health checks and alert rules remain
 - [ ] **Phase 3 · AI analysis**: runs automatically on major incidents with a small open model (e.g. Qwen or Kimi) through any OpenAI-compatible endpoint, always keeping *observed evidence* separate from *inference*
 - [ ] **Phase 4 · User diagnostics**: a *"Report a problem"* flow that asks for consent, with a screenshot, the page trail and a link to the server events
 - [ ] **Phase 5 · Open-source hardening**: SDKs on npm, more examples, a security review

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api, errorMessage, type Facets, type Incident, type Project, type Stats, type StoredEvent } from "../api";
 import { ErrorNote, LEVEL_ORDER, LevelBadge, Time } from "../components/bits";
 import { ErrorGroups } from "../components/ErrorGroups";
@@ -189,13 +189,13 @@ export function LogsPage({ project }: { project: Project }) {
           type="search"
           placeholder="Search messages…"
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onInput={(event) => setSearch(event.currentTarget.value)}
           aria-label="Search messages"
         />
         <select
           aria-label="Minimum level"
           value={params.get("level") ?? ""}
-          onChange={(event) => setParams({ level: event.target.value || undefined, exactLevel: undefined })}
+          onChange={(event) => setParams({ level: event.currentTarget.value || undefined, exactLevel: undefined })}
         >
           <option value="">All levels</option>
           {LEVEL_ORDER.map((level) => (
@@ -204,7 +204,7 @@ export function LogsPage({ project }: { project: Project }) {
             </option>
           ))}
         </select>
-        <select aria-label="Service" value={params.get("service") ?? ""} onChange={(event) => setParams({ service: event.target.value || undefined })}>
+        <select aria-label="Service" value={params.get("service") ?? ""} onChange={(event) => setParams({ service: event.currentTarget.value || undefined })}>
           <option value="">All services</option>
           {facets?.services.map((service) => (
             <option key={service}>{service}</option>
@@ -214,7 +214,7 @@ export function LogsPage({ project }: { project: Project }) {
           <select
             aria-label="Environment"
             value={params.get("environment") ?? ""}
-            onChange={(event) => setParams({ environment: event.target.value || undefined })}
+            onChange={(event) => setParams({ environment: event.currentTarget.value || undefined })}
           >
             <option value="">All environments</option>
             {facets.environments.map((environment) => (
@@ -222,7 +222,7 @@ export function LogsPage({ project }: { project: Project }) {
             ))}
           </select>
         )}
-        <select aria-label="Time range" value={range ?? "All"} onChange={(event) => setParams({ range: event.target.value === "All" ? undefined : event.target.value, from: undefined, to: undefined })}>
+        <select aria-label="Time range" value={range ?? "All"} onChange={(event) => setParams({ range: event.currentTarget.value === "All" ? undefined : event.currentTarget.value, from: undefined, to: undefined })}>
           {RANGES.map((r) => (
             <option key={r.label} value={r.label}>
               {r.label === "All" ? "Any time" : `Last ${r.label}`}
@@ -234,7 +234,7 @@ export function LogsPage({ project }: { project: Project }) {
           placeholder="Route, e.g. /api/*"
           defaultValue={params.get("route") ?? ""}
           key={`route-${params.get("route") ?? ""}`}
-          onBlur={(event) => setParams({ route: event.target.value.trim() || undefined })}
+          onBlur={(event) => setParams({ route: event.currentTarget.value.trim() || undefined })}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
@@ -243,7 +243,7 @@ export function LogsPage({ project }: { project: Project }) {
           }}
         />
         <label className="toggle">
-          <input type="checkbox" checked={live} onChange={(event) => setLive(event.target.checked)} />
+          <input type="checkbox" checked={live} onChange={(event) => setLive(event.currentTarget.checked)} />
           Live
         </label>
       </form>

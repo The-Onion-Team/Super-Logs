@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState } from "preact/hooks";
 import type { Level } from "../api";
 
 export const LEVEL_ORDER: Level[] = ["debug", "info", "warning", "error", "critical"];
