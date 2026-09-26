@@ -22,6 +22,8 @@ const schema = v.refine(
     SUPER_LOGS_SESSION_TTL_HOURS: v.withDefault(v.number({ coerce: true, int: true, min: 1, max: 24 * 90 }), 24 * 7),
     /** Raw events older than this are deleted. */
     SUPER_LOGS_RETENTION_DAYS: v.withDefault(v.number({ coerce: true, int: true, min: 1, max: 3650 }), 14),
+    /** Security signals (the only data holding client IPs) and resolved findings older than this are deleted. */
+    SUPER_LOGS_SECURITY_RETENTION_DAYS: v.withDefault(v.number({ coerce: true, int: true, min: 1, max: 365 }), 7),
     /** Per ingest key. */
     SUPER_LOGS_INGEST_EVENTS_PER_MINUTE: v.withDefault(v.number({ coerce: true, int: true, min: 1 }), 6000),
     /** Read the client IP from Cloudflare / reverse-proxy headers. Only enable behind a proxy you control. */
@@ -76,6 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
         : undefined,
     sessionTtlMs: e.SUPER_LOGS_SESSION_TTL_HOURS * 3_600_000,
     retentionDays: e.SUPER_LOGS_RETENTION_DAYS,
+    securityRetentionDays: e.SUPER_LOGS_SECURITY_RETENTION_DAYS,
     ingestEventsPerMinute: e.SUPER_LOGS_INGEST_EVENTS_PER_MINUTE,
     trustProxy: e.SUPER_LOGS_TRUST_PROXY,
     alertWebhookUrl: e.SUPER_LOGS_ALERT_WEBHOOK_URL,

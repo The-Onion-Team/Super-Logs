@@ -1,14 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { api, errorMessage, type Facets, type Incident, type Project, type Stats, type StoredEvent } from "../api";
-import { ErrorNote, LEVEL_ORDER, LevelBadge, Time } from "../components/bits";
-import { ErrorGroups } from "../components/ErrorGroups";
-import { Incidents } from "../components/Incidents";
-import { ErrorRate, Latency } from "../components/charts";
+import { api, errorMessage, type Facets, type Project, type StoredEvent } from "../api";
+import { ErrorNote, Time } from "../components/bits";
 import { EventDetail } from "../components/EventDetail";
-import { Histogram } from "../components/Histogram";
 import { Link, useQueryState } from "../router";
 
 const FILTER_KEYS = ["level", "exactLevel", "service", "environment", "route", "requestId", "sessionId", "userId", "event", "fingerprint", "tag", "from", "to", "q"] as const;
+
+/** Minimum level, as one segmented control: the four views people actually switch between. */
+const LEVEL_VIEWS: { value: string; label: string }[] = [
+  { value: "", label: "All" },
+  { value: "warning", label: "Warnings+" },
+  { value: "error", label: "Errors+" },
+  { value: "critical", label: "Critical" },
+];
+
+const LEVEL_LABEL: Record<string, string> = { debug: "Debug", info: "Info", warning: "Warning", error: "Error", critical: "Critical" };
+
+const FILTER_LABELS: Record<string, string> = {
+  level: "level",
+  service: "service",
+  environment: "environment",
+  route: "route",
+  requestId: "request",
+  sessionId: "session",
+  userId: "user",
+  event: "event",
+  fingerprint: "same problem",
+  tag: "tag",
+  from: "from",
+  to: "to",
+};
 
 const RANGES: { label: string; hours?: number }[] = [
   { label: "15 min", hours: 0.25 },
@@ -24,9 +45,8 @@ export function LogsPage({ project }: { project: Project }) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [facets, setFacets] = useState<Facets | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
   const [live, setLive] = useState(true);
   const [search, setSearch] = useState(params.get("q") ?? "");
   const selected = params.get("event_id");
@@ -68,22 +88,6 @@ export function LogsPage({ project }: { project: Project }) {
     [project.id],
   );
 
-  const loadStats = useCallback(async () => {
-    try {
-      setStats(await api<Stats>(`/projects/${project.id}/stats?hours=24`));
-    } catch {
-      /* the header is optional */
-    }
-  }, [project.id]);
-
-  const loadIncidents = useCallback(async () => {
-    try {
-      setIncidents((await api<{ incidents: Incident[] }>(`/projects/${project.id}/incidents?status=open&limit=20`)).incidents);
-    } catch {
-      /* incidents are an enhancement to the log stream */
-    }
-  }, [project.id]);
-
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -92,9 +96,8 @@ export function LogsPage({ project }: { project: Project }) {
   }, [load, queryKey]);
 
   useEffect(() => {
-    void loadStats();
     api<Facets>(`/projects/${project.id}/facets`).then(setFacets, () => undefined);
-  }, [project.id, loadStats]);
+  }, [project.id]);
 
   // Live tail: refresh while the tab is visible and nothing is being paged.
   useEffect(() => {
@@ -102,15 +105,22 @@ export function LogsPage({ project }: { project: Project }) {
     const timer = setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void load();
-      void loadStats();
-      void loadIncidents();
     }, 5_000);
     return () => clearInterval(timer);
-  }, [live, load, loadStats, loadIncidents]);
+  }, [live, load]);
 
+  // "/" jumps to the search box, as in most log tools.
+  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    void loadIncidents();
-  }, [loadIncidents]);
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || target?.closest("input, textarea, select")) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const loadMore = async () => {
     if (!cursor) return;
@@ -130,129 +140,110 @@ export function LogsPage({ project }: { project: Project }) {
   const activeChips = FILTER_KEYS.filter((key) => key !== "q" && key !== "exactLevel" && params.get(key));
   const hasEvents = events.length > 0;
 
+  const levelView = params.get("exactLevel") ? null : params.get("level") ?? "";
+  const extraFilters = ["service", "environment", "range", "route"].filter((key) => params.get(key)).length;
+
   return (
     <div className="page logs">
-      <section className="summary" aria-label="Last 24 hours">
-        {stats && (
-          <>
-            <div className="counters">
-              {(["critical", "error", "warning"] as const).map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  className={`counter counter-${level}${params.get("level") === level ? " selected" : ""}`}
-                  onClick={() => setParams({ level: params.get("level") === level ? undefined : level, exactLevel: undefined })}
-                >
-                  <strong>{stats.byLevel[level].toLocaleString()}</strong>
-                  <span>{level === "warning" ? "warnings" : level === "error" ? "errors" : "critical"}</span>
-                </button>
-              ))}
-              <div className="counter">
-                <strong>{Object.values(stats.byLevel).reduce((a, b) => a + b, 0).toLocaleString()}</strong>
-                <span>events · 24h</span>
-              </div>
-            </div>
-            <Histogram buckets={stats.hourly} />
-          </>
-        )}
-      </section>
-
-      {stats && (
-        <section className="charts" aria-label="Trends over the last 24 hours">
-          <ErrorRate buckets={stats.hourly} />
-          <Latency buckets={stats.latency} />
-        </section>
-      )}
-
-      <Incidents
-        incidents={incidents}
-        onSelect={(fingerprint) => setParams({ fingerprint, level: undefined, exactLevel: undefined })}
-        onResolve={async (incidentId) => {
-          try {
-            await api(`/projects/${project.id}/incidents/${incidentId}/resolve`, { method: "POST", body: {} });
-            await loadIncidents();
-          } catch (err) {
-            setError(errorMessage(err));
-          }
-        }}
-      />
-      {stats && <ErrorGroups groups={stats.groups} onSelect={(fingerprint) => setParams({ fingerprint, level: undefined, exactLevel: undefined })} />}
-
       <form
-        className="filters"
+        className={`toolbar${showFilters ? " show-filters" : ""}`}
+        role="search"
         onSubmit={(event) => {
           event.preventDefault();
           setParams({ q: search.trim() || undefined });
         }}
       >
-        <input
-          type="search"
-          placeholder="Search messages…"
-          value={search}
-          onInput={(event) => setSearch(event.currentTarget.value)}
-          aria-label="Search messages"
-        />
-        <select
-          aria-label="Minimum level"
-          value={params.get("level") ?? ""}
-          onChange={(event) => setParams({ level: event.currentTarget.value || undefined, exactLevel: undefined })}
-        >
-          <option value="">All levels</option>
-          {LEVEL_ORDER.map((level) => (
-            <option key={level} value={level}>
-              {level} and above
-            </option>
+        <label className="search-field">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="M20 20l-3.5-3.5" />
+          </svg>
+          <span className="visually-hidden">Search messages</span>
+          <input
+            ref={searchRef}
+            type="search"
+            placeholder="Search messages, errors and event names"
+            value={search}
+            onInput={(event) => setSearch(event.currentTarget.value)}
+          />
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+        <button type="button" className="ghost filters-toggle" aria-expanded={showFilters} onClick={() => setShowFilters(!showFilters)}>
+          Filters{extraFilters ? <span className="count-badge">{extraFilters}</span> : null}
+        </button>
+        <div className="segmented" role="group" aria-label="Minimum level">
+          {LEVEL_VIEWS.map((view) => (
+            <button
+              key={view.value}
+              type="button"
+              aria-pressed={levelView === view.value}
+              onClick={() => setParams({ level: view.value || undefined, exactLevel: undefined })}
+            >
+              {view.label}
+            </button>
           ))}
-        </select>
-        <select aria-label="Service" value={params.get("service") ?? ""} onChange={(event) => setParams({ service: event.currentTarget.value || undefined })}>
-          <option value="">All services</option>
-          {facets?.services.map((service) => (
-            <option key={service}>{service}</option>
-          ))}
-        </select>
-        {facets && facets.environments.length > 1 && (
-          <select
-            aria-label="Environment"
-            value={params.get("environment") ?? ""}
-            onChange={(event) => setParams({ environment: event.currentTarget.value || undefined })}
-          >
-            <option value="">All environments</option>
-            {facets.environments.map((environment) => (
-              <option key={environment}>{environment}</option>
+        </div>
+        <div className="toolbar-filters">
+          <select aria-label="Service" value={params.get("service") ?? ""} onChange={(event) => setParams({ service: event.currentTarget.value || undefined })}>
+            <option value="">All services</option>
+            {facets?.services.map((service) => (
+              <option key={service}>{service}</option>
             ))}
           </select>
-        )}
-        <select aria-label="Time range" value={range ?? "All"} onChange={(event) => setParams({ range: event.currentTarget.value === "All" ? undefined : event.currentTarget.value, from: undefined, to: undefined })}>
-          {RANGES.map((r) => (
-            <option key={r.label} value={r.label}>
-              {r.label === "All" ? "Any time" : `Last ${r.label}`}
-            </option>
-          ))}
-        </select>
-        <input
-          aria-label="Route"
-          placeholder="Route, e.g. /api/*"
-          defaultValue={params.get("route") ?? ""}
-          key={`route-${params.get("route") ?? ""}`}
-          onBlur={(event) => setParams({ route: event.currentTarget.value.trim() || undefined })}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              setParams({ route: event.currentTarget.value.trim() || undefined });
-            }
-          }}
-        />
-        <label className="toggle">
-          <input type="checkbox" checked={live} onChange={(event) => setLive(event.currentTarget.checked)} />
-          Live
-        </label>
+          {facets && facets.environments.length > 1 && (
+            <select
+              aria-label="Environment"
+              value={params.get("environment") ?? ""}
+              onChange={(event) => setParams({ environment: event.currentTarget.value || undefined })}
+            >
+              <option value="">All environments</option>
+              {facets.environments.map((environment) => (
+                <option key={environment}>{environment}</option>
+              ))}
+            </select>
+          )}
+          <select
+            aria-label="Time range"
+            value={range ?? "All"}
+            onChange={(event) => setParams({ range: event.currentTarget.value === "All" ? undefined : event.currentTarget.value, from: undefined, to: undefined })}
+          >
+            {RANGES.map((r) => (
+              <option key={r.label} value={r.label}>
+                {r.label === "All" ? "Any time" : `Last ${r.label}`}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label="Route"
+            className="route-filter"
+            placeholder="Route, e.g. /api/*"
+            defaultValue={params.get("route") ?? ""}
+            key={`route-${params.get("route") ?? ""}`}
+            onBlur={(event) => setParams({ route: event.currentTarget.value.trim() || undefined })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                setParams({ route: event.currentTarget.value.trim() || undefined });
+              }
+            }}
+          />
+        </div>
+        <button type="button" className={`live-toggle${live ? " on" : ""}`} aria-pressed={live} onClick={() => setLive(!live)} title={live ? "Pause live updates" : "Resume live updates"}>
+          <span className="live-dot" aria-hidden="true" />
+          {live ? "Live" : "Paused"}
+        </button>
       </form>
 
       {activeChips.length > 0 && (
         <div className="chips">
           {activeChips.map((key) => (
-            <button key={key} type="button" className="chip" onClick={() => setParams({ [key]: undefined })} title="Remove filter">
-              {key}: <strong>{params.get(key)}</strong> ×
+            <button key={key} type="button" className="chip" onClick={() => setParams({ [key]: undefined, ...(key === "level" ? { exactLevel: undefined } : {}) })} title="Remove filter">
+              {FILTER_LABELS[key] ?? key}:{" "}
+              <strong>
+                {key === "fingerprint" ? params.get(key)!.slice(0, 8) : params.get(key)}
+                {key === "level" && params.get("exactLevel") ? " only" : key === "level" ? " and above" : ""}
+              </strong>{" "}
+              ×
             </button>
           ))}
           <button
@@ -267,6 +258,11 @@ export function LogsPage({ project }: { project: Project }) {
           </button>
         </div>
       )}
+
+      <p className="stream-meta muted small-text">
+        {loading && !hasEvents ? "Loading…" : `${events.length}${cursor ? "+" : ""} event${events.length === 1 ? "" : "s"}, newest first`}
+        {hasEvents && " · select one for its details, request and session"}
+      </p>
 
       <ErrorNote message={error} />
 
@@ -294,7 +290,7 @@ export function LogsPage({ project }: { project: Project }) {
                   <Time iso={event.timestamp} />
                 </td>
                 <td className="col-level">
-                  <LevelBadge level={event.level} />
+                  <span className={`level-dot level-dot-${event.level}`}>{LEVEL_LABEL[event.level]}</span>
                 </td>
                 <td className="col-service">{event.service ?? <span className="muted">—</span>}</td>
                 <td className="col-message">

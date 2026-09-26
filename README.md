@@ -97,6 +97,11 @@ SaaS tools answer this well, but they get expensive, and they keep your users' d
 - **Telegram** notifications, set up per project in the dashboard
 - Per-channel retry, so a failure never sends a duplicate
 
+**🛡️ Security**
+- Spots brute-force sign-ins, vulnerability scanners and server-error floods against your apps
+- Watches its own dashboard for brute force, ingest-key guessing and sign-ins from new addresses
+- Setup checks, active sessions you can revoke, and alerts through the same channels as incidents
+
 **🧹 Housekeeping**
 - Retention: old events are deleted automatically
 
@@ -225,6 +230,23 @@ http.createServer((req, res) =>
 ```
 
 Every log line written during that request carries its request id. 5xx and slow responses are logged automatically. When you know the user, call `logs.setContext({ userId })`.
+
+**Report attacks to the Security page.** This is opt-in, because it sends the client address along:
+
+```ts
+export const logs = createSuperLogs({
+  // …
+  security: {
+    enabled: true,
+    ipHeader: "cf-connecting-ip", // the ONE header your proxy sets; omit to use the socket address
+  },
+});
+
+// Things only your code knows, e.g. a sign-in that failed but still answers 200:
+logs.securitySignal("login_failed", { req, account: email }); // the account is hashed before it is sent
+```
+
+`runWithRequest` then reports 401/403, 429 and 5xx responses, plus requests for paths scanners try (`/.env`, `/.git/`, `/wp-login.php`, …). These arrive as *signals*, which are never stored as log lines (see [Security](#%EF%B8%8F-security)).
 
 <details>
 <summary><b>Express</b></summary>
@@ -357,6 +379,30 @@ Alerts are then delivered to every channel you turn on. Delivery is tracked per 
 - **Generic JSON webhook** — set `SUPER_LOGS_ALERT_WEBHOOK_URL` to receive redacted incident JSON at your own endpoint.
 - **Telegram** — set it up per project in the dashboard, or with `SUPER_LOGS_TELEGRAM_*` for every project at once.
 
+### 🛡️ Security
+
+The **Security** page (administrators only) shows attacks on your apps and on Super-Logs itself.
+
+A **signal** is one suspicious request plus the client address: a 401, a probe for `/.env`, a failed sign-in. Signals come from the Node SDK's `security` option and from Super-Logs' own sign-in form and ingest endpoint. They are stored apart from your logs, and they are the only place an IP address is kept (for `SUPER_LOGS_SECURITY_RETENTION_DAYS`, 7 by default).
+
+Once a minute, signals are counted per address over the last 10 minutes. When a rule's threshold is crossed, a **finding** is opened:
+
+| Finding | Where | When one address, in 10 minutes, sends… |
+|---|---|---|
+| Brute force | your app | 20+ denied requests or failed sign-ins (critical at 100, or at 5+ different accounts) |
+| Vulnerability scanner | your app | 10+ requests for scanner paths |
+| Burst of server errors | your app | 20+ requests answered with a 5xx |
+| Dashboard brute force | Super-Logs | 5+ failed or locked-out dashboard sign-ins |
+| Ingest key guessing | Super-Logs | 20+ requests with an invalid ingest key |
+| New address | Super-Logs | a dashboard sign-in from an address this account has not used recently (informational) |
+
+Findings about an app are also written to that project's log as one event **without the address**. That makes them incidents, so they reach your Telegram chat with the usual deduplication, and the alert links back to the Security page. Findings about Super-Logs itself go to every configured channel. A finding resolves after 30 quiet minutes, or when you resolve it.
+
+The page also shows a short **setup checklist**: HTTPS, first-boot passwords, unused ingest keys, and proxy headers that could be spoofed. It also lists **dashboard sign-ins** and **active sessions**, which you can revoke.
+
+> [!NOTE]
+> Super-Logs sits beside your app, not in front of it, so it detects and alerts; it does not block. Blocking is planned, through the SDK.
+
 #### 📨 Telegram notifications
 
 You get a message like this the moment a problem starts, with a link straight to the events behind it:
@@ -412,7 +458,8 @@ Everything is set through environment variables, and every one is documented in 
 | `SUPER_LOGS_RETENTION_DAYS` | `14` | Events older than this are deleted (checked hourly). |
 | `SUPER_LOGS_SESSION_TTL_HOURS` | `168` | How long an unused dashboard session stays valid. |
 | `SUPER_LOGS_INGEST_EVENTS_PER_MINUTE` | `6000` | Rate limit per ingest key. |
-| `SUPER_LOGS_TRUST_PROXY` | `true` | Read the client IP from `CF-Connecting-IP` / `X-Forwarded-For`. The IP is used for rate limits only. |
+| `SUPER_LOGS_TRUST_PROXY` | `true` | Read the client IP from `CF-Connecting-IP` / `X-Forwarded-For`, for sign-in rate limits and security signals. Only safe when the server is reachable through your proxy alone; the Security page warns when it looks otherwise. |
+| `SUPER_LOGS_SECURITY_RETENTION_DAYS` | `7` | Security signals (the only data holding client IPs) and resolved findings older than this are deleted. |
 | `SUPER_LOGS_ALERT_WEBHOOK_URL` | — | Optional JSON webhook for incident alerts. Alerts remain local when unset. |
 | `SUPER_LOGS_ALERT_COOLDOWN_MINUTES` | `15` | Minimum time between repeated alerts for one ongoing incident. |
 | `SUPER_LOGS_TELEGRAM_BOT_TOKEN` | — | Bot token from [@BotFather](https://t.me/BotFather), for alerts on *every* project. Set together with the chat id, or not at all. Per-project setup lives in the dashboard instead. |
@@ -478,7 +525,7 @@ docker compose cp super-logs:/data/backup.db ./super-logs-backup.db
 **Your users' data**
 - Sensitive keys (`password`, `token`, `secret`, `authorization`, `cookie`, `apiKey`, card fields, …) and credential-shaped values (Bearer tokens, JWTs, card numbers, `?token=` in URLs) are **redacted in the SDK** and **again on arrival**.
 - Routes are stored without query strings.
-- Client IP addresses are used only for rate limiting and are **never stored**.
+- Client IP addresses never enter your logs. They are kept only with **security signals** (suspicious requests and dashboard sign-ins), shown only to administrators, and deleted after 7 days by default. Apps send them only when the SDK's `security` option is on.
 - User ids come from **your server**, never from the browser.
 - Old events are deleted automatically.
 
@@ -486,9 +533,10 @@ docker compose cp super-logs:/data/backup.db ./super-logs-backup.db
 - Passwords are hashed with scrypt. Session tokens and API keys are stored only as SHA-256 hashes.
 - Cookies are `HttpOnly` + `SameSite=Strict` (+ `Secure` over HTTPS).
 - Every change is checked for cross-site requests (custom header + `Origin` check).
-- Sign-in is locked after repeated failures.
+- Sign-in is locked after repeated failures, and repeated failures raise a security finding.
 - Strict Content Security Policy, `X-Frame-Options: DENY`, HSTS.
 - An **audit log** records every sign-in and administrative change.
+- A **Security page** lists dashboard sign-ins with their address, active sessions (revocable), and setup checks.
 
 Found a vulnerability? Please report it privately through [GitHub security advisories](https://github.com/The-Onion-Team/Super-Logs/security/advisories/new) instead of opening a public issue.
 
@@ -528,6 +576,7 @@ IDEA.md         the full product vision
 
 - [x] **Phase 1 · Logging core**: ingestion, SDKs, storage, dashboard, auth, retention
 - [ ] **Phase 2 · Incidents & alerts**: incident grouping, alert deduplication, generic webhook and **Telegram** notifications shipped; health checks and alert rules remain
+- [ ] **Security**: signals, findings, setup checks and session management shipped; blocking through the SDK comes next
 - [ ] **Phase 3 · AI analysis**: runs automatically on major incidents with a small open model (e.g. Qwen or Kimi) through any OpenAI-compatible endpoint, always keeping *observed evidence* separate from *inference*
 - [ ] **Phase 4 · User diagnostics**: a *"Report a problem"* flow that asks for consent, with a screenshot, the page trail and a link to the server events
 - [ ] **Phase 5 · Open-source hardening**: SDKs on npm, more examples, a security review

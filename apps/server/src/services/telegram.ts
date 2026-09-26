@@ -67,6 +67,8 @@ function duration(fromIso: string, toIso: string): string {
 }
 
 export function incidentUrl(alert: IncidentAlert, publicOrigin: string): string {
+  // Security findings are explained, address and all, on the Security page.
+  if (alert.event?.startsWith("security.")) return `${publicOrigin}/security`;
   const query = new URLSearchParams({ fingerprint: alert.fingerprint });
   return `${publicOrigin}/projects/${encodeURIComponent(alert.projectId)}/logs?${query}`;
 }

@@ -168,4 +168,42 @@ export const MIGRATIONS: string[] = [
     UNIQUE (project_id, kind)
   );
   `,
+  /* 5 — security signals (the only rows holding client IPs), findings, and the session's address */ `
+  CREATE TABLE security_signals (
+    id           INTEGER PRIMARY KEY,
+    -- NULL: Super-Logs itself (its own sign-in form and ingest endpoint).
+    project_id   TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    ts           INTEGER NOT NULL,
+    kind         TEXT NOT NULL,
+    ip           TEXT,
+    route        TEXT,
+    method       TEXT,
+    http_status  INTEGER,
+    user_agent   TEXT,
+    account      TEXT
+  );
+  CREATE INDEX security_signals_ts ON security_signals(ts);
+  CREATE INDEX security_signals_project_ip ON security_signals(project_id, ip, ts);
+
+  CREATE TABLE security_findings (
+    id             TEXT PRIMARY KEY,
+    project_id     TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    rule           TEXT NOT NULL,
+    ip             TEXT NOT NULL,
+    level          INTEGER NOT NULL,
+    status         TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
+    first_seen_at  INTEGER NOT NULL,
+    last_seen_at   INTEGER NOT NULL,
+    signal_count   INTEGER NOT NULL,
+    detail         TEXT,
+    last_alert_at  INTEGER,
+    resolved_at    INTEGER
+  );
+  CREATE INDEX security_findings_status ON security_findings(status, last_seen_at DESC);
+  -- COALESCE: a NULL project would otherwise never collide with another NULL.
+  CREATE UNIQUE INDEX security_findings_one_open
+    ON security_findings(COALESCE(project_id, ''), rule, ip) WHERE status = 'open';
+
+  ALTER TABLE sessions ADD COLUMN ip TEXT;
+  `,
 ];

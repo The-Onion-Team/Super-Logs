@@ -1,10 +1,12 @@
 import { LIMITS, type IngestResult } from "@super-logs/shared";
 import { Hono } from "hono/tiny";
 import { bodyLimit } from "hono/body-limit";
-import type { AppEnv } from "../app.js";
+import { clientIp, type AppEnv } from "../app.js";
+import { transaction } from "../db/index.js";
 import { log } from "../lib/log.js";
 import { metrics } from "../lib/metrics.js";
 import { batchSchema, insertEvents, normalizeEvent } from "../services/events.js";
+import { normalizeIp, recordSelfSignal, recordSignals, type SignalInput } from "../services/security.js";
 
 /**
  * `POST /api/ingest` — server-to-server event intake.
@@ -30,6 +32,15 @@ export function ingestRoutes() {
       const key = secret ? keys.resolve(secret) : null;
       if (!key) {
         metrics.ingestUnauthorized++;
+        recordSelfSignal(db, limits.securitySignals, {
+          kind: "bad_api_key",
+          ts: Date.now(),
+          ip: normalizeIp(clientIp(c)),
+          route: "/api/ingest",
+          method: "POST",
+          httpStatus: 401,
+          userAgent: c.req.header("user-agent"),
+        });
         return c.json({ error: "invalid_api_key" }, 401);
       }
 
@@ -53,6 +64,8 @@ export function ingestRoutes() {
 
       const receivedAt = Date.now();
       const accepted: Parameters<typeof insertEvents>[2] = [];
+      // Security signals are not log lines: they go to their own short-lived table, IP and all.
+      const signals: SignalInput[] = [];
       const errors: NonNullable<IngestResult["errors"]> = [];
       batch.value.events.forEach((raw, index) => {
         if (index >= granted) {
@@ -60,13 +73,28 @@ export function ingestRoutes() {
           return;
         }
         const result = normalizeEvent(raw, receivedAt);
-        if (result.ok) accepted.push({ event: result.event, ts: result.ts });
-        else if (errors.length < 20) errors.push({ index, message: result.message });
+        if (!result.ok) {
+          if (errors.length < 20) errors.push({ index, message: result.message });
+        } else if (result.event.security) {
+          const { event, ts } = result;
+          signals.push({
+            kind: event.security!.signal,
+            ts,
+            ip: normalizeIp(event.security!.ip),
+            route: event.route,
+            method: event.method,
+            httpStatus: event.httpStatus,
+            userAgent: event.security!.userAgent,
+            account: event.security!.account,
+          });
+        } else accepted.push({ event: result.event, ts: result.ts });
       });
 
       const started = performance.now();
       try {
         insertEvents(db, key.projectId, accepted, receivedAt, c.get("deps").config.alertCooldownMs);
+        if (signals.length) transaction(db, () => recordSignals(db, key.projectId, signals));
+        metrics.securitySignals += signals.length;
         keys.touch(key.keyId, receivedAt);
       } catch (error) {
         metrics.ingestErrors++;
@@ -75,10 +103,10 @@ export function ingestRoutes() {
       }
       metrics.lastIngestMs = Math.round(performance.now() - started);
 
-      const rejected = batch.value.events.length - accepted.length;
+      const rejected = batch.value.events.length - accepted.length - signals.length;
       metrics.eventsAccepted += accepted.length;
       metrics.eventsRejected += rejected;
-      const result: IngestResult = { accepted: accepted.length, rejected, ...(errors.length ? { errors } : {}) };
+      const result: IngestResult = { accepted: accepted.length + signals.length, rejected, ...(errors.length ? { errors } : {}) };
       return c.json(result, 202);
     },
   );

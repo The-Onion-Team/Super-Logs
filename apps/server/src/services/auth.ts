@@ -86,13 +86,19 @@ export async function changePassword(db: Db, userId: string, current: string, ne
 
 // --- sessions --------------------------------------------------------------
 
-export function createSession(db: Db, userId: string, ttlMs: number, userAgent: string | undefined): { token: string; expiresAt: number } {
+export function createSession(
+  db: Db,
+  userId: string,
+  ttlMs: number,
+  userAgent: string | undefined,
+  ip: string | null = null,
+): { token: string; expiresAt: number } {
   const token = randomToken();
   const now = Date.now();
   const expiresAt = now + ttlMs;
   db.prepare(
-    "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(sha256(token), userId, now, expiresAt, now, userAgent?.slice(0, 300) ?? null);
+    "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at, user_agent, ip) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(sha256(token), userId, now, expiresAt, now, userAgent?.slice(0, 300) ?? null, ip);
   return { token, expiresAt };
 }
 
@@ -129,6 +135,63 @@ export function deleteSession(db: Db, tokenHash: string): void {
 /** Signs a user out everywhere except (optionally) the current session. */
 export function deleteUserSessions(db: Db, userId: string, exceptTokenHash?: string): void {
   db.prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?").run(userId, exceptTokenHash ?? "");
+}
+
+export interface SessionView {
+  /** The first 16 hex characters of the token hash: enough to address it, useless as a credential. */
+  id: string;
+  userId: string;
+  email: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  userAgent: string | null;
+  ip: string | null;
+  current: boolean;
+}
+
+/** Every live session, most recently used first. */
+export function listSessions(db: Db, currentTokenHash: string, now = Date.now()): SessionView[] {
+  const rows = db
+    .prepare(
+      `SELECT s.token_hash, s.user_id, u.email, s.created_at, s.last_seen_at, s.expires_at, s.user_agent, s.ip
+       FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.expires_at > ? ORDER BY s.last_seen_at DESC LIMIT 200`,
+    )
+    .all(now) as unknown as {
+    token_hash: string;
+    user_id: string;
+    email: string;
+    created_at: number;
+    last_seen_at: number;
+    expires_at: number;
+    user_agent: string | null;
+    ip: string | null;
+  }[];
+  return rows.map((row) => ({
+    id: row.token_hash.slice(0, 16),
+    userId: row.user_id,
+    email: row.email,
+    createdAt: new Date(row.created_at).toISOString(),
+    lastSeenAt: new Date(row.last_seen_at).toISOString(),
+    expiresAt: new Date(row.expires_at).toISOString(),
+    userAgent: row.user_agent,
+    ip: row.ip,
+    current: row.token_hash === currentTokenHash,
+  }));
+}
+
+/** Ends the session whose id `listSessions` reported. Refuses anything ambiguous. */
+export function deleteSessionById(db: Db, id: string): boolean {
+  if (!/^[0-9a-f]{16}$/.test(id)) return false;
+  const matches = db.prepare("SELECT token_hash FROM sessions WHERE substr(token_hash, 1, 16) = ?").all(id) as unknown as { token_hash: string }[];
+  if (matches.length !== 1) return false;
+  deleteSession(db, matches[0]!.token_hash);
+  return true;
+}
+
+/** Signs out every session on the instance except `keepTokenHash`. */
+export function deleteAllOtherSessions(db: Db, keepTokenHash: string): number {
+  return Number(db.prepare("DELETE FROM sessions WHERE token_hash != ?").run(keepTokenHash).changes);
 }
 
 export function deleteExpiredSessions(db: Db, now = Date.now()): number {

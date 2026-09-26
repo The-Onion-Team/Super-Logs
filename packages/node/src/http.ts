@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { performance } from "node:perf_hooks";
-import { REQUEST_ID_HEADER, REQUEST_ID_PATTERN, randomId } from "@super-logs/shared";
+import { REQUEST_ID_HEADER, REQUEST_ID_PATTERN, classifyResponse, randomId } from "@super-logs/shared";
 import { withContext } from "./context.js";
 import type { SuperLogs } from "./logger.js";
 
@@ -56,11 +56,19 @@ export function runWithRequest<T>(
   const slowMs = options.slowRequestMs ?? 3000;
   const started = performance.now();
 
+  const security = logger.securityEnabled;
+
   return withContext({ requestId, route, method }, () => {
-    if (!ignored) {
+    // Ignored paths are still checked for probes: `/assets/../.env` is one.
+    if (!ignored || security) {
       res.once("finish", () => {
-        const durationMs = Math.round(performance.now() - started);
         const status = res.statusCode;
+        if (security) {
+          const kind = classifyResponse(route, status);
+          if (kind) logger.securitySignal(kind, { req, route, method, httpStatus: status });
+        }
+        if (ignored) return;
+        const durationMs = Math.round(performance.now() - started);
         const fields = { event: "http_request", httpStatus: status, durationMs };
         if (status >= 500) logger.error(`${method} ${route} → ${status}`, fields);
         else if (slowMs > 0 && durationMs >= slowMs && !isStreaming(req)) {

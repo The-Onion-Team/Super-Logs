@@ -1,8 +1,10 @@
 import {
+  IP_PATTERN,
   LEVEL_RANK,
   LIMITS,
   LEVELS,
   REQUEST_ID_PATTERN,
+  SECURITY_SIGNAL_KINDS,
   fingerprint,
   redactEvent,
   truncate,
@@ -60,6 +62,14 @@ export const eventSchema = v.object({
     }),
   ),
   metadata: v.optional(v.record(v.string(), v.unknown)),
+  security: v.optional(
+    v.object({
+      signal: v.enumOf(SECURITY_SIGNAL_KINDS),
+      ip: v.optional(v.string({ trim: true, max: 45, pattern: IP_PATTERN, patternMessage: "must be an IPv4 or IPv6 address" })),
+      userAgent: v.optional(v.map(v.string({ max: 2000 }), (value) => truncate(value, 300))),
+      account: v.optional(v.string({ max: 64, pattern: /^[\w.:-]+$/, patternMessage: "must be an opaque id or hash, not an email" })),
+    }),
+  ),
 });
 
 export const batchSchema = v.object({
