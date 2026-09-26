@@ -126,6 +126,83 @@ export interface AuditEntry {
   detail: Record<string, unknown> | null;
 }
 
+export interface SecurityFinding {
+  id: string;
+  projectId: string | null;
+  projectName: string | null;
+  rule: "brute_force" | "scanner" | "error_flood" | "dashboard_brute_force" | "key_guessing" | "new_ip_sign_in";
+  message: string;
+  ip: string;
+  level: Level;
+  status: "open" | "resolved";
+  firstSeen: string;
+  lastSeen: string;
+  signalCount: number;
+  detail: {
+    routes?: { route: string; count: number }[];
+    accounts?: number;
+    account?: string;
+    kinds?: Record<string, number>;
+  } | null;
+  lastAlertAt: string | null;
+  resolvedAt: string | null;
+}
+
+export interface SecuritySignal {
+  at: string;
+  kind: string;
+  ip: string | null;
+  route: string | null;
+  method: string | null;
+  httpStatus: number | null;
+  userAgent: string | null;
+  account: string | null;
+}
+
+export interface SecuritySession {
+  id: string;
+  userId: string;
+  email: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  userAgent: string | null;
+  ip: string | null;
+  current: boolean;
+}
+
+export interface PostureCheck {
+  id: string;
+  status: "ok" | "warn" | "info";
+  title: string;
+  detail?: string;
+}
+
+export interface SecurityActivity {
+  start: string;
+  probes: number;
+  signIns: number;
+  denied: number;
+  errors: number;
+}
+
+export interface SecurityOverview {
+  counts: {
+    openFindings: number;
+    openCritical: number;
+    openInfo: number;
+    resolvedFindings: number;
+    attackingAddresses24h: number;
+    signals24h: number;
+    failedSignIns24h: number;
+    lockedOut24h: number;
+  };
+  activity: SecurityActivity[];
+  posture: PostureCheck[];
+  retentionDays: number;
+  lastDetectionAt: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -175,6 +252,7 @@ const MESSAGES: Record<string, string> = {
   csrf_rejected: "The request was blocked. Reload the page and try again.",
   bot_token_required: "Paste the bot token from @BotFather to finish setting this up.",
   send_failed: "Telegram would not accept the message.",
+  current_session: "That is this session: use Sign out instead.",
 };
 
 export function errorMessage(error: unknown): string {

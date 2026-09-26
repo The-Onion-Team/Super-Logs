@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  IP_PATTERN,
   REDACTED,
+  classifyResponse,
+  isProbePath,
   fingerprint,
   normalizeMessage,
   normalizeRoute,
@@ -99,5 +102,32 @@ describe("fingerprint", () => {
     expect(fingerprint(base)).toBe(fingerprint(same));
     expect(fingerprint(base)).not.toBe(fingerprint(other));
     expect(fingerprint(base)).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+describe("security classification", () => {
+  it("recognises scanner paths and leaves ordinary ones alone", () => {
+    for (const path of ["/.env", "/.env.production", "/app/.git/config", "/wp-login.php", "/wp-admin/", "/xmlrpc.php", "/phpmyadmin/", "/index.php", "/actuator/health", "/cgi-bin/luci", "/../../etc/passwd", "/static/%2e%2e/secret", "/..%2f..%2fetc/passwd", "/..%5cwindows", "/backup.sql"]) {
+      expect(isProbePath(path), path).toBe(true);
+    }
+    for (const path of ["/", "/standings", "/api/login", "/environment", "/league/42/team", "/assets/app.js", "/.well-known/security.txt", "/php-guide"]) {
+      expect(isProbePath(path), path).toBe(false);
+    }
+  });
+
+  it("classifies responses, probes first", () => {
+    expect(classifyResponse("/.env", 404)).toBe("probe");
+    expect(classifyResponse("/.env", 200)).toBe("probe");
+    expect(classifyResponse("/api/me", 401)).toBe("auth_failed");
+    expect(classifyResponse("/api/admin", 403)).toBe("auth_failed");
+    expect(classifyResponse("/api/login", 429)).toBe("rate_limited");
+    expect(classifyResponse("/api/x", 503)).toBe("server_error");
+    expect(classifyResponse("/missing", 404)).toBeNull();
+    expect(classifyResponse("/", 200)).toBeNull();
+  });
+
+  it("accepts addresses and rejects anything else", () => {
+    for (const ip of ["1.2.3.4", "2001:db8::1", "::1", "::ffff:1.2.3.4"]) expect(IP_PATTERN.test(ip), ip).toBe(true);
+    for (const ip of ["<script>", "1.2.3.4; drop", "unknown", "cafe", ""]) expect(IP_PATTERN.test(ip), ip).toBe(false);
   });
 });

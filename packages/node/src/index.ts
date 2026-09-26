@@ -4,7 +4,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { SuperLogs, type SuperLogsOptions } from "./logger.js";
 import { runWithRequest, type RequestTrackingOptions } from "./http.js";
 
-export { SuperLogs, type SuperLogsOptions, type LogFields } from "./logger.js";
+export {
+  SuperLogs,
+  clientAddress,
+  hashAccount,
+  type SuperLogsOptions,
+  type LogFields,
+  type SecurityOptions,
+  type SecuritySignalFields,
+} from "./logger.js";
 export { currentContext, withContext, setContext, type LogContext } from "./context.js";
 export { createBrowserRelay, type BrowserRelayOptions } from "./relay.js";
 export { pathOf, requestIdFrom, type RequestTrackingOptions } from "./http.js";
@@ -13,6 +21,8 @@ export type { TransportStats } from "./transport.js";
 export {
   LEVELS,
   REQUEST_ID_HEADER,
+  SECURITY_SIGNAL_KINDS,
+  type SecuritySignalKind,
   type Level,
   type SuperLogsEvent,
   type EventError,

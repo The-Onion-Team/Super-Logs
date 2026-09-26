@@ -24,6 +24,8 @@ export interface IncidentAlert {
   message: string;
   service: string | null;
   route: string | null;
+  /** The machine event name of the latest event, e.g. `security.scanner`. */
+  event?: string | null;
 }
 
 export interface AlertChannel {

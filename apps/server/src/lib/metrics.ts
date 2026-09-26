@@ -14,4 +14,19 @@ export const metrics = {
   loginFailures: 0,
   alertsSent: 0,
   alertsFailed: 0,
+  securitySignals: 0,
+  securityFindingsOpened: 0,
+};
+
+/**
+ * How client addresses have been arriving, for the security posture checks.
+ * Kept apart from `metrics` because it holds an address (the proxy's) and
+ * `metrics` is shown to every signed-in user.
+ */
+export const proxyObservation = {
+  /** A forwarding header arrived while SUPER_LOGS_TRUST_PROXY is on, from a public socket address. */
+  publicSourceAt: null as number | null,
+  publicSource: null as string | null,
+  /** A forwarding header arrived while SUPER_LOGS_TRUST_PROXY is off. */
+  ignoredHeaderAt: null as number | null,
 };

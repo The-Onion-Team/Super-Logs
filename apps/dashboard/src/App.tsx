@@ -8,6 +8,7 @@ import { ChangePasswordPage } from "./pages/ChangePassword";
 import { LoginPage } from "./pages/Login";
 import { LogsPage } from "./pages/Logs";
 import { ProjectsPage } from "./pages/Projects";
+import { SecurityPage } from "./pages/Security";
 import { SystemPage } from "./pages/System";
 
 type Session = { state: "loading" } | { state: "anonymous" } | { state: "signed-in"; user: User };
@@ -72,6 +73,7 @@ export function App() {
     else page = <LogsPage key={project.id} project={project} />;
   } else if (path === "/projects") page = <ProjectsPage user={user} projects={projects} onChange={loadProjects} />;
   else if (path === "/audit" && user.role === "admin") page = <AuditPage />;
+  else if (path === "/security" && user.role === "admin") page = <SecurityPage projects={projects} />;
   else if (path === "/system") page = <SystemPage />;
   else if (path === "/account") page = <ChangePasswordPage onDone={() => undefined} />;
   else {

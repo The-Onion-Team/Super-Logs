@@ -266,3 +266,101 @@ describe("browser relay", () => {
     expect((await relay(new Request("https://app.example.com/api/telemetry"))).status).toBe(405);
   });
 });
+
+describe("security signals", () => {
+  let server: Server | undefined;
+  afterEach(() => server?.close());
+
+  /** Serves every request with `status` and sends `requests` through it. */
+  async function serve(logger: ReturnType<typeof make>, status: (path: string) => number, requests: { path: string; headers?: Record<string, string> }[]) {
+    server = createServer((req, res) =>
+      logger.runWithRequest(req, res, () => {
+        res.statusCode = status(req.url ?? "/");
+        res.end();
+      }),
+    );
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    for (const { path, headers } of requests) {
+      await new Promise<void>((resolve, reject) => {
+        const req = httpRequest({ port, path, headers }, (res) => {
+          res.resume();
+          res.on("end", resolve);
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await logger.flush();
+  }
+
+  const signals = (sent: Sent[]) => sent.flatMap((s) => s.events).filter((e) => e.security);
+
+  it("reports nothing unless enabled", async () => {
+    const { fn, sent } = fakeFetch();
+    const logger = make({ fetch: fn });
+    await serve(logger, () => 404, [{ path: "/.env" }, { path: "/admin" }]);
+    expect(signals(sent)).toEqual([]);
+  });
+
+  it("classifies probes, denials, lock-outs and server errors, and ignores the rest", async () => {
+    const { fn, sent } = fakeFetch();
+    const logger = make({ fetch: fn, minLevel: "error", security: { enabled: true } });
+    const statuses: Record<string, number> = { "/.env": 404, "/api/me": 401, "/api/login": 429, "/api/boom": 500, "/missing": 404, "/ok": 200 };
+    await serve(logger, (path) => statuses[path.split("?")[0]!] ?? 200, Object.keys(statuses).map((path) => ({ path: `${path}?token=abc` })));
+    const found = signals(sent);
+    // minLevel "error" would drop info events; signals ignore it.
+    expect(found.map((e) => [e.route, e.security?.signal])).toEqual([
+      ["/.env", "probe"],
+      ["/api/me", "auth_failed"],
+      ["/api/login", "rate_limited"],
+      ["/api/boom", "server_error"],
+    ]);
+    expect(found[0]).toMatchObject({ level: "info", event: "security.probe", method: "GET", httpStatus: 404, security: { ip: "127.0.0.1" } });
+    expect(JSON.stringify(found)).not.toContain("token=abc");
+  });
+
+  it("trusts only the configured address header", async () => {
+    const { fn, sent } = fakeFetch();
+    const logger = make({ fetch: fn, security: { enabled: true, ipHeader: "cf-connecting-ip" } });
+    await serve(logger, () => 401, [
+      { path: "/a", headers: { "cf-connecting-ip": "198.51.100.7", "x-forwarded-for": "10.0.0.1" } },
+      // Without the configured header, a spoofed x-forwarded-for is not believed.
+      { path: "/b", headers: { "x-forwarded-for": "203.0.113.9" } },
+      { path: "/c", headers: { "cf-connecting-ip": "<script>" } },
+    ]);
+    expect(signals(sent).map((e) => e.security?.ip)).toEqual(["198.51.100.7", undefined, undefined]);
+  });
+
+  it("caps signals per address per minute", async () => {
+    const { fn, sent } = fakeFetch();
+    const logger = make({ fetch: fn, security: { enabled: true, maxPerAddressPerMinute: 3 } });
+    for (let i = 0; i < 10; i++) logger.securitySignal("probe", { ip: "198.51.100.7", route: "/.env" });
+    logger.securitySignal("probe", { ip: "198.51.100.8", route: "/.env" });
+    await logger.flush();
+    expect(signals(sent).map((e) => e.security?.ip)).toEqual(["198.51.100.7", "198.51.100.7", "198.51.100.7", "198.51.100.8"]);
+  });
+
+  it("hashes the account of a failed sign-in", async () => {
+    const { fn, sent } = fakeFetch();
+    const logger = make({ fetch: fn });
+    logger.securitySignal("login_failed", { ip: "198.51.100.7", account: "Someone@Example.com", route: "/api/login", httpStatus: 200 });
+    logger.securitySignal("login_failed", { ip: "198.51.100.7", account: "someone@example.com" });
+    await logger.flush();
+    const [first, second] = signals(sent);
+    expect(first?.security?.account).toMatch(/^acc_[0-9a-f]{32}$/);
+    expect(first?.security?.account).toBe(second?.security?.account);
+    expect(JSON.stringify(sent).toLowerCase()).not.toContain("someone@");
+  });
+
+  it("never forwards a signal a browser claims to send", async () => {
+    const { fn, sent } = fakeFetch();
+    const logger = make({ fetch: fn });
+    logger.forward({ level: "error", message: "from a browser", security: { signal: "probe", ip: "1.2.3.4" } });
+    await logger.flush();
+    const events = sent.flatMap((s) => s.events);
+    expect(events).toHaveLength(1);
+    expect(events[0]).not.toHaveProperty("security");
+  });
+});

@@ -223,6 +223,7 @@ interface PendingAlertRow {
   message: string | null;
   service: string | null;
   route: string | null;
+  event: string | null;
 }
 
 /** Dispatch rounds an alert gets before it is abandoned. */
@@ -244,7 +245,7 @@ export async function dispatchPendingAlerts(db: Db, resolve: ChannelResolver, li
               i.id AS incident_id, i.project_id, p.name AS project_name, i.fingerprint, i.status,
               i.event_count, i.max_level, i.first_seen_at, i.last_seen_at,
               sample.error_name, sample.error_message, sample.message,
-              sample.service, sample.route
+              sample.service, sample.route, sample.event
        FROM incident_alerts a
        JOIN incidents i ON i.id = a.incident_id
        JOIN projects p ON p.id = i.project_id
@@ -348,6 +349,7 @@ function toAlert(row: PendingAlertRow): IncidentAlert {
     message: row.error_message ?? row.message ?? "",
     service: row.service,
     route: row.route,
+    event: row.event,
   };
 }
 

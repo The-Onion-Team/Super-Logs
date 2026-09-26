@@ -37,6 +37,7 @@ the process.
 | `captureCrashes` | `true` | Uncaught exceptions are written to a spool file and sent on the next start. The crash itself is unchanged. |
 | `spoolDir` | `os.tmpdir()` | |
 | `slowRequestMs` | `3000` | For `runWithRequest`. |
+| `security` | off | `{ enabled: true, ipHeader?: "cf-connecting-ip", maxPerAddressPerMinute?: 30 }`. See [Security signals](#security-signals). |
 | `batchSize`, `flushIntervalMs`, `maxQueueSize`, `timeoutMs` | 50, 2000, 2000, 5000 | |
 | `redactKeys`, `beforeSend`, `onTransportError` | | |
 
@@ -55,6 +56,26 @@ warnings. Use `logs.setContext({ userId })` once you know the user, and
 The context and the logger live on `globalThis`, so an app that loads the SDK
 twice (a custom server plus a framework bundle) still shares one queue and one
 context. `getSuperLogs(options)` returns the process-wide instance.
+
+## Security signals
+
+With `security: { enabled: true }`, `runWithRequest` also reports suspicious
+responses to Super-Logs' Security page, with the client address: 401/403, 429,
+5xx, and requests for paths scanners try (`/.env`, `/.git/`, `/wp-login.php`,
+`*.php`, path traversal, …). Signals ignore `minLevel`, are capped per address
+per minute, and are stored apart from your logs.
+
+The address comes from `ipHeader`, the one header your proxy overwrites
+(`cf-connecting-ip` behind Cloudflare), or from the socket when it is unset.
+Only one header is read. Falling back through several would let a client set
+whichever one the proxy leaves alone.
+
+Report what only your code knows with `securitySignal`. The account is hashed
+before it leaves the process:
+
+```ts
+if (!passwordOk) logs.securitySignal("login_failed", { req, account: email });
+```
 
 ## Browser relay
 

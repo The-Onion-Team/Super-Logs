@@ -1,12 +1,17 @@
+import { createHash } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import { hostname } from "node:os";
 import { format } from "node:util";
 import {
+  IP_PATTERN,
   LEVEL_RANK,
   LIMITS,
   isLevel,
+  isSecuritySignalKind,
   redactEvent,
   truncate,
   type Level,
+  type SecuritySignalKind,
   type SuperLogsEvent,
 } from "@super-logs/shared";
 import { currentContext, setContext, withContext, type LogContext } from "./context.js";
@@ -48,6 +53,12 @@ export interface SuperLogsOptions {
   spoolDir?: string;
   /** Responses slower than this are logged as warnings by `runWithRequest`. Default 3000. 0 disables. */
   slowRequestMs?: number;
+  /**
+   * Security signals for Super-Logs' Security page. Off by default. When on,
+   * `runWithRequest` reports 401/403, 429, 5xx and requests for scanner paths
+   * (`/.env`, `/wp-login.php`, …) together with the client address.
+   */
+  security?: SecurityOptions;
   batchSize?: number;
   flushIntervalMs?: number;
   maxQueueSize?: number;
@@ -56,6 +67,31 @@ export interface SuperLogsOptions {
   onTransportError?: (error: Error) => void;
   /** For tests. */
   fetch?: typeof fetch;
+}
+
+export interface SecurityOptions {
+  enabled?: boolean;
+  /**
+   * The one header that holds the real client address, set by a proxy you
+   * control: `cf-connecting-ip` behind Cloudflare, `x-real-ip` behind a
+   * typical nginx. Without it the socket address is used. Never set this to a
+   * header your proxy does not overwrite, or clients can pick their own address.
+   */
+  ipHeader?: string;
+  /** Signals per client address per minute, beyond which they are dropped. Default 30. */
+  maxPerAddressPerMinute?: number;
+}
+
+export interface SecuritySignalFields {
+  /** The request, to read the client address and user agent from. */
+  req?: IncomingMessage;
+  /** The client address, when there is no `req` to read it from. */
+  ip?: string;
+  /** The account a sign-in was attempted for. Hashed before it leaves the process. */
+  account?: string;
+  route?: string;
+  method?: string;
+  httpStatus?: number;
 }
 
 /** Second argument of every log call: known event fields are lifted, the rest becomes metadata. */
@@ -95,12 +131,13 @@ export class SuperLogs {
   private readonly minRank: number;
   private readonly spoolFile: string | undefined;
   private readonly cleanups: (() => void)[] = [];
+  private readonly signalBudget: SignalBudget;
 
   /** Use `createSuperLogs()`; the constructor is shared with child loggers. */
   constructor(
     private readonly options: SuperLogsOptions,
     private readonly bound: LogFields,
-    shared: { transport: Transport | undefined; spoolFile?: string },
+    shared: { transport: Transport | undefined; spoolFile?: string; signalBudget?: SignalBudget },
   ) {
     this.service = options.service;
     this.environment = options.environment ?? process.env.NODE_ENV ?? "production";
@@ -114,6 +151,55 @@ export class SuperLogs {
     this.enabled = Boolean(shared.transport);
     this.spoolFile = shared.spoolFile;
     this.transport = shared.transport;
+    this.signalBudget = shared.signalBudget ?? new SignalBudget(options.security?.maxPerAddressPerMinute ?? 30);
+  }
+
+  /** Whether `runWithRequest` reports security signals. */
+  get securityEnabled(): boolean {
+    return Boolean(this.transport && this.options.security?.enabled);
+  }
+
+  /**
+   * Reports a security signal: something only the app knows is suspicious,
+   * like a failed sign-in that still answers 200. Ignores `minLevel`.
+   *
+   * ```ts
+   * if (!valid) logs.securitySignal("login_failed", { req, account: email });
+   * ```
+   */
+  securitySignal(kind: SecuritySignalKind, fields: SecuritySignalFields = {}): void {
+    try {
+      if (!this.transport || !isSecuritySignalKind(kind)) return;
+      const ip = fields.ip ?? (fields.req ? clientAddress(fields.req, this.options.security?.ipHeader) : undefined);
+      const address = ip && IP_PATTERN.test(ip) ? ip : undefined;
+      if (!this.signalBudget.take(address ?? "unknown")) return;
+      const ctx = currentContext();
+      const userAgent = header(fields.req, "user-agent");
+      const event: SuperLogsEvent = {
+        ...this.base,
+        timestamp: new Date().toISOString(),
+        level: "info",
+        message: `Security signal: ${kind}`,
+        event: `security.${kind}`,
+        requestId: ctx?.requestId,
+        route: fields.route ?? ctx?.route ?? (fields.req?.url ? fields.req.url.split(/[?#]/)[0] : undefined),
+        method: fields.method ?? ctx?.method ?? fields.req?.method,
+        httpStatus: fields.httpStatus,
+        security: {
+          signal: kind,
+          ...(address ? { ip: address } : {}),
+          ...(userAgent ? { userAgent: truncate(userAgent, 300) } : {}),
+          ...(fields.account ? { account: hashAccount(fields.account) } : {}),
+        },
+      };
+      for (const key of Object.keys(event) as (keyof SuperLogsEvent)[]) {
+        if (event[key] === undefined) delete event[key];
+      }
+      const final = this.options.beforeSend ? this.options.beforeSend(event) : event;
+      if (final) this.transport.push(final);
+    } catch (error) {
+      rawConsole.warn("[super-logs] could not record a security signal:", error);
+    }
   }
 
   /** @internal */
@@ -185,7 +271,10 @@ export class SuperLogs {
   forward(event: SuperLogsEvent): void {
     try {
       if (!this.transport || !isLevel(event.level) || LEVEL_RANK[event.level] < this.minRank) return;
-      const shaped = redactEvent({ ...this.base, ...event }, { keys: this.options.redactKeys });
+      // Forwarded events come from browsers, which must not be able to report
+      // signals with an address of their choosing.
+      const { security: _untrusted, ...rest } = event;
+      const shaped = redactEvent({ ...this.base, ...rest }, { keys: this.options.redactKeys });
       const final = this.options.beforeSend ? this.options.beforeSend(shaped) : shaped;
       if (final) this.transport.push(final);
     } catch (error) {
@@ -196,7 +285,11 @@ export class SuperLogs {
   /** A logger that adds `fields` to every event and shares this one's queue. */
   child(fields: LogFields): SuperLogs {
     const tags = { ...(this.bound.tags as Record<string, string> | undefined), ...(fields.tags as Record<string, string> | undefined) };
-    return new SuperLogs(this.options, { ...this.bound, ...fields, tags }, { transport: this.transport, spoolFile: this.spoolFile });
+    return new SuperLogs(
+      this.options,
+      { ...this.bound, ...fields, tags },
+      { transport: this.transport, spoolFile: this.spoolFile, signalBudget: this.signalBudget },
+    );
   }
 
   withContext<T>(ctx: LogContext, fn: () => T): T {
@@ -320,6 +413,59 @@ export class SuperLogs {
     };
     process.on("uncaughtExceptionMonitor", onCrash);
     this.cleanups.push(() => process.off("uncaughtExceptionMonitor", onCrash));
+  }
+}
+
+/**
+ * The client address: the configured proxy header if there is one, otherwise
+ * the socket. A single header on purpose — trying several in turn lets a
+ * client fill in whichever one the proxy does not overwrite.
+ */
+export function clientAddress(req: IncomingMessage, ipHeader?: string): string | undefined {
+  const raw = ipHeader ? header(req, ipHeader)?.split(",")[0]?.trim() : req.socket?.remoteAddress;
+  if (!raw) return undefined;
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(raw);
+  return (mapped ? mapped[1] : raw)?.toLowerCase();
+}
+
+function header(req: IncomingMessage | undefined, name: string): string | undefined {
+  const value = req?.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/** Accounts leave the process as a hash: enough to count distinct ones, useless to read. */
+export function hashAccount(account: string): string {
+  return `acc_${createHash("sha256").update(account.trim().toLowerCase()).digest("hex").slice(0, 32)}`;
+}
+
+/**
+ * Per-address signal budget over fixed one-minute windows. A scanner sends
+ * thousands of requests; a few dozen per minute already prove the point, and
+ * the rest would only crowd real events out of the queue.
+ */
+export class SignalBudget {
+  private window = 0;
+  private used = 0;
+  private readonly counts = new Map<string, number>();
+
+  constructor(
+    private readonly perAddress: number,
+    /** Across all addresses, so a distributed flood is bounded too. */
+    private readonly total = perAddress * 20,
+  ) {}
+
+  take(address: string, now = Date.now()): boolean {
+    const window = Math.floor(now / 60_000);
+    if (window !== this.window) {
+      this.window = window;
+      this.used = 0;
+      this.counts.clear();
+    }
+    const byAddress = this.counts.get(address) ?? 0;
+    if (byAddress >= this.perAddress || this.used >= this.total) return false;
+    this.counts.set(address, byAddress + 1);
+    this.used++;
+    return true;
   }
 }
 

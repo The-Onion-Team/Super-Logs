@@ -11,6 +11,7 @@ import {
   deleteSession,
   deleteUserSessions,
 } from "../services/auth.js";
+import { normalizeIp, recordSelfSignal, recordSignIn } from "../services/security.js";
 import { clearSessionCookie, csrf, requireUser, setSessionCookie } from "./guards.js";
 
 const loginSchema = v.object({
@@ -34,8 +35,22 @@ export function authRoutes() {
     const { email, password } = parsed.value;
     const ip = clientIp(c);
     const emailKey = email.toLowerCase();
+    const address = normalizeIp(ip);
+    const userAgent = c.req.header("user-agent");
+    const signal = (kind: "login_failed" | "rate_limited", httpStatus: number) =>
+      recordSelfSignal(db, limits.securitySignals, {
+        kind,
+        ts: Date.now(),
+        ip: address,
+        route: "/api/auth/login",
+        method: "POST",
+        httpStatus,
+        userAgent,
+        account: emailKey,
+      });
 
     if (!limits.loginByIp.peek(ip) || !limits.loginByEmail.peek(emailKey)) {
+      signal("rate_limited", 429);
       c.header("retry-after", "900");
       return c.json({ error: "too_many_attempts" }, 429);
     }
@@ -46,13 +61,15 @@ export function authRoutes() {
       limits.loginByIp.take(ip);
       limits.loginByEmail.take(emailKey);
       metrics.loginFailures++;
+      signal("login_failed", 401);
       audit(db, "auth.login_failed", { actor: emailKey.slice(0, 320) });
       return c.json({ error: "invalid_credentials" }, 401);
     }
     limits.loginByEmail.reset(emailKey);
 
-    const session = createSession(db, user.id, config.sessionTtlMs, c.req.header("user-agent"));
+    const session = createSession(db, user.id, config.sessionTtlMs, userAgent, address);
     setSessionCookie(c, session.token, session.expiresAt);
+    recordSignIn(db, { ip: address, account: user.email, userAgent });
     audit(db, "auth.login", { userId: user.id, actor: user.email });
     return c.json({ user });
   });

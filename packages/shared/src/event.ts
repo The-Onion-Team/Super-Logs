@@ -1,3 +1,5 @@
+import type { SecurityInfo } from "./security.js";
+
 /**
  * The Super-Logs event: one structured JSON record, whoever produced it.
  *
@@ -79,6 +81,11 @@ export interface SuperLogsEvent {
   tags?: Record<string, string>;
   /** Anything else. Redacted before it leaves the SDK and again on ingest. */
   metadata?: Record<string, unknown>;
+  /**
+   * Marks the event as a security signal. The server stores it in its own
+   * short-lived table (the only place a client IP is kept) instead of the log.
+   */
+  security?: SecurityInfo;
 }
 
 /** The body of `POST /api/ingest`. */

@@ -51,6 +51,11 @@ export function Layout(props: {
             System
           </Link>
           {props.user.role === "admin" && (
+            <Link to="/security" className={active("/security")}>
+              Security
+            </Link>
+          )}
+          {props.user.role === "admin" && (
             <Link to="/audit" className={active("/audit")}>
               Audit
             </Link>
