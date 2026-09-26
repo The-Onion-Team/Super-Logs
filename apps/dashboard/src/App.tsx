@@ -7,7 +7,9 @@ import { AuditPage } from "./pages/Audit";
 import { ChangePasswordPage } from "./pages/ChangePassword";
 import { LoginPage } from "./pages/Login";
 import { LogsPage } from "./pages/Logs";
+import { OverviewPage } from "./pages/Overview";
 import { ProjectsPage } from "./pages/Projects";
+import { SettingsPage } from "./pages/Settings";
 import { SecurityPage } from "./pages/Security";
 import { SystemPage } from "./pages/System";
 
@@ -64,22 +66,23 @@ export function App() {
   };
 
   let page: ComponentChildren;
-  const match = path.match(/^\/projects\/([^/]+)(?:\/(logs|settings))?\/?$/);
+  const match = path.match(/^\/projects\/([^/]+)(?:\/(overview|logs|settings))?\/?$/);
   if (projects === null) page = <div className="empty">Loading…</div>;
   else if (match) {
     const project = projects.find((p) => p.id === match[1]);
     if (!project) page = <div className="empty">This project does not exist.</div>;
-    else if (match[2] === "settings") page = <ProjectsPage user={user} projects={projects} current={project} onChange={loadProjects} />;
-    else page = <LogsPage key={project.id} project={project} />;
+    else if (!match[2]) page = <Redirect to={`/projects/${project.id}/overview`} />;
+    else if (match[2] === "settings") page = <SettingsPage key={project.id} user={user} project={project} onChange={loadProjects} />;
+    else if (match[2] === "logs") page = <LogsPage key={project.id} project={project} />;
+    else page = <OverviewPage key={project.id} project={project} />;
   } else if (path === "/projects") page = <ProjectsPage user={user} projects={projects} onChange={loadProjects} />;
   else if (path === "/audit" && user.role === "admin") page = <AuditPage />;
   else if (path === "/security" && user.role === "admin") page = <SecurityPage projects={projects} />;
   else if (path === "/system") page = <SystemPage />;
   else if (path === "/account") page = <ChangePasswordPage onDone={() => undefined} />;
   else {
-    // Home: the first project's logs, or project setup when there is none.
-    const first = projects[0];
-    page = <Redirect to={first ? `/projects/${first.id}/logs` : "/projects"} />;
+    // Home: straight into the only project, otherwise the list of them.
+    page = <Redirect to={projects.length === 1 ? `/projects/${projects[0]!.id}/overview` : "/projects"} />;
   }
 
   return (

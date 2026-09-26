@@ -1,276 +1,178 @@
-import { useCallback, useEffect, useState } from "preact/hooks";
-import { api, errorMessage, type ApiKey, type Project, type User } from "../api";
-import { CopyButton, ErrorNote, relative } from "../components/bits";
-import { Notifications } from "../components/Notifications";
+import { useEffect, useState } from "preact/hooks";
+import { api, errorMessage, type Project, type Stats, type StoredEvent, type User } from "../api";
+import { ErrorNote, relative } from "../components/bits";
 import { Link, navigate } from "../router";
 
-export function ProjectsPage(props: { user: User; projects: Project[]; current?: Project; onChange: () => Promise<void> }) {
-  const isAdmin = props.user.role === "admin";
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <div className="page">
-      <h1>Projects</h1>
-      <p className="muted">
-        A project is one application. Each has its own ingest keys and its own events.
-      </p>
-
-      <ul className="project-list">
-        {props.projects.map((project) => (
-          <li key={project.id} className={project.id === props.current?.id ? "selected" : undefined}>
-            <Link to={`/projects/${project.id}/settings`}>
-              <strong>{project.name}</strong> <span className="muted mono">{project.slug}</span>
-            </Link>
-            <Link to={`/projects/${project.id}/logs`} className="ghost small button-like">
-              Logs →
-            </Link>
-          </li>
-        ))}
-        {props.projects.length === 0 && <li className="muted">No projects yet.</li>}
-      </ul>
-
-      {isAdmin && (
-        <form
-          className="inline-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const form = event.currentTarget;
-            const name = String(new FormData(form).get("name") ?? "");
-            try {
-              const { project } = await api<{ project: Project }>("/projects", { method: "POST", body: { name } });
-              form.reset();
-              setError(null);
-              await props.onChange();
-              navigate(`/projects/${project.id}/settings`);
-            } catch (err) {
-              setError(errorMessage(err));
-            }
-          }}
-        >
-          <input name="name" placeholder="New project name, e.g. My App" required maxLength={80} aria-label="Project name" />
-          <button type="submit">Create project</button>
-        </form>
-      )}
-      <ErrorNote message={error} />
-
-      {props.current && <ProjectSettings key={props.current.id} project={props.current} isAdmin={isAdmin} onChange={props.onChange} />}
-    </div>
-  );
+interface Health {
+  events: number;
+  problems: number;
+  openIncidents: number;
+  lastEvent: string | null;
+  hourly: Stats["hourly"];
 }
 
-function ProjectSettings({ project, isAdmin, onChange }: { project: Project; isAdmin: boolean; onChange: () => Promise<void> }) {
-  const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [secret, setSecret] = useState<string | null>(null);
+/** Every project with its last day at a glance: is it healthy, is it even sending? */
+export function ProjectsPage(props: { user: User; projects: Project[]; onChange: () => Promise<void> }) {
+  const isAdmin = props.user.role === "admin";
+  const [health, setHealth] = useState<Record<string, Health>>({});
+  const [adding, setAdding] = useState(props.projects.length === 0);
   const [error, setError] = useState<string | null>(null);
-
-  const loadKeys = useCallback(async () => {
-    if (!isAdmin) return;
-    try {
-      setKeys((await api<{ keys: ApiKey[] }>(`/projects/${project.id}/keys`)).keys);
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }, [project.id, isAdmin]);
 
   useEffect(() => {
-    void loadKeys();
-  }, [loadKeys]);
-
-  const act = async (fn: () => Promise<unknown>) => {
-    try {
-      setError(null);
-      await fn();
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  };
+    let cancelled = false;
+    const load = () => {
+      for (const project of props.projects) {
+        Promise.all([
+          api<Stats>(`/projects/${project.id}/stats?hours=24`),
+          api<{ incidents: unknown[] }>(`/projects/${project.id}/incidents?status=open&limit=100`),
+          api<{ events: StoredEvent[] }>(`/projects/${project.id}/events?limit=1`),
+        ]).then(
+          ([stats, incidents, latest]) => {
+            if (cancelled) return;
+            setHealth((current) => ({
+              ...current,
+              [project.id]: {
+                events: Object.values(stats.byLevel).reduce((a, b) => a + b, 0),
+                problems: stats.byLevel.error + stats.byLevel.critical,
+                openIncidents: incidents.incidents.length,
+                lastEvent: latest.events[0]?.receivedAt ?? null,
+                hourly: stats.hourly,
+              },
+            }));
+          },
+          () => undefined,
+        );
+      }
+    };
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [props.projects]);
 
   return (
-    <section className="settings">
-      <h2>{project.name}</h2>
+    <div className="page projects-page">
+      <div className="page-head">
+        <div>
+          <h1>Projects</h1>
+          <p className="muted">One project per application. Each has its own ingest keys, events and alerts.</p>
+        </div>
+        {isAdmin && !adding && (
+          <button type="button" className="page-head-aside" onClick={() => setAdding(true)}>
+            New project
+          </button>
+        )}
+      </div>
       <ErrorNote message={error} />
 
-      {isAdmin && (
-        <>
-          <h3>Ingest keys</h3>
-          <p className="muted">
-            Keys authenticate your <strong>servers</strong>. Never put one in browser code: browsers send events through a relay route on your own server.
-          </p>
+      <div className="project-grid">
+        {props.projects.map((project) => (
+          <ProjectCard key={project.id} project={project} health={health[project.id]} />
+        ))}
 
-          {secret && (
-            <div className="secret-box" role="status">
-              <p>
-                <strong>Copy this key now.</strong> It is shown only once.
-              </p>
-              <div className="secret-row">
-                <code>{secret}</code>
-                <CopyButton value={secret} />
-              </div>
-              <button type="button" className="ghost small" onClick={() => setSecret(null)}>
-                I stored it
-              </button>
-            </div>
-          )}
-
-          <table className="keys">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Key</th>
-                <th>Created</th>
-                <th>Last used</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((key) => (
-                <tr key={key.id} className={key.revokedAt ? "revoked" : undefined}>
-                  <td>{key.name}</td>
-                  <td className="mono">{key.prefix}…</td>
-                  <td>{relative(key.createdAt)}</td>
-                  <td>{key.revokedAt ? `revoked ${relative(key.revokedAt)}` : relative(key.lastUsedAt)}</td>
-                  <td className="actions">
-                    {!key.revokedAt && (
-                      <button
-                        type="button"
-                        className="danger small"
-                        onClick={() => {
-                          if (!confirm(`Revoke "${key.name}"? Anything still using it will stop sending events.`)) return;
-                          void act(async () => {
-                            await api(`/projects/${project.id}/keys/${key.id}`, { method: "DELETE" });
-                            await loadKeys();
-                          });
-                        }}
-                      >
-                        Revoke
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {keys.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="muted">
-                    No keys yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
+        {isAdmin && adding && (
           <form
-            className="inline-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const form = event.currentTarget;
-              const name = String(new FormData(form).get("name") ?? "");
-              void act(async () => {
-                const result = await api<{ secret: string }>(`/projects/${project.id}/keys`, { method: "POST", body: { name } });
-                setSecret(result.secret);
-                form.reset();
-                await loadKeys();
-              });
-            }}
-          >
-            <input name="name" placeholder="Key name, e.g. production backend" required maxLength={80} aria-label="Key name" />
-            <button type="submit">Create key</button>
-          </form>
-        </>
-      )}
-
-      {isAdmin && <Notifications projectId={project.id} />}
-
-      <h3>Send events</h3>
-      <Setup />
-
-      {isAdmin && (
-        <>
-          <h3>Rename</h3>
-          <form
-            className="inline-form"
-            onSubmit={(event) => {
+            className="project-card project-new"
+            onSubmit={async (event) => {
               event.preventDefault();
               const name = String(new FormData(event.currentTarget).get("name") ?? "");
-              void act(async () => {
-                await api(`/projects/${project.id}`, { method: "PATCH", body: { name } });
-                await onChange();
-              });
+              try {
+                const { project } = await api<{ project: Project }>("/projects", { method: "POST", body: { name } });
+                setError(null);
+                await props.onChange();
+                navigate(`/projects/${project.id}/settings`);
+              } catch (err) {
+                setError(errorMessage(err));
+              }
             }}
           >
-            <input name="name" defaultValue={project.name} required maxLength={80} aria-label="Project name" />
-            <button type="submit" className="ghost">
-              Rename
-            </button>
+            <strong>Add a project</strong>
+            <span className="muted small-text">You get an ingest key and copy-paste setup for Node.js, the browser or plain HTTP.</span>
+            <label>
+              <span>Name</span>
+              <input name="name" placeholder="e.g. Checkout API" required maxLength={80} autoFocus={props.projects.length > 0} />
+            </label>
+            <div className="project-new-actions">
+              <button type="submit">Create project</button>
+              {props.projects.length > 0 && (
+                <button type="button" className="ghost" onClick={() => setAdding(false)}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
-
-          <h3 className="danger-title">Delete project</h3>
-          <p className="muted">Deletes the project, its keys and all of its events. This cannot be undone.</p>
-          <form
-            className="inline-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const confirmText = String(new FormData(event.currentTarget).get("confirm") ?? "");
-              void act(async () => {
-                await api(`/projects/${project.id}`, { method: "DELETE", body: { confirm: confirmText } });
-                await onChange();
-                navigate("/projects");
-              });
-            }}
-          >
-            <input name="confirm" placeholder={`Type ${project.slug} to confirm`} required aria-label="Confirm slug" autoComplete="off" />
-            <button type="submit" className="danger">
-              Delete
-            </button>
-          </form>
-        </>
-      )}
-    </section>
+        )}
+      </div>
+      {!isAdmin && props.projects.length === 0 && <div className="empty">No projects yet. An administrator can create one.</div>}
+    </div>
   );
 }
 
-function Setup() {
-  const origin = location.origin;
-  const server = `import { createSuperLogs } from "@super-logs/node";
-
-export const logs = createSuperLogs({
-  url: process.env.SUPER_LOGS_URL,        // ${origin}
-  apiKey: process.env.SUPER_LOGS_API_KEY, // slk_…
-  service: "backend",
-  release: process.env.GIT_COMMIT,
-  captureConsole: ["error", "warn"],
-});
-
-logs.error("Database query failed", { error, queryName: "getLeague" });`;
-
-  const relay = `// Browser events go through your server, which holds the key.
-import { createBrowserRelay } from "@super-logs/node";
-export const POST = createBrowserRelay(logs);   // e.g. app/api/telemetry/route.ts`;
-
-  const browser = `import { createSuperLogs } from "@super-logs/browser";
-
-const logs = createSuperLogs({ endpoint: "/api/telemetry" });`;
-
-  const curl = `curl -X POST ${origin}/api/ingest \\
-  -H "Authorization: Bearer $SUPER_LOGS_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"events":[{"level":"error","message":"Hello from curl","service":"shell"}]}'`;
+function ProjectCard({ project, health }: { project: Project; health: Health | undefined }) {
+  const status = !health
+    ? null
+    : health.openIncidents > 0
+      ? { tone: "bad", text: `${health.openIncidents} open incident${health.openIncidents === 1 ? "" : "s"}` }
+      : health.lastEvent === null
+        ? { tone: "off", text: "No events yet" }
+        : { tone: "ok", text: "Healthy" };
+  const max = Math.max(1, ...(health?.hourly.map((hour) => hour.total) ?? []));
 
   return (
-    <div className="setup">
-      {[
-        ["Node.js", server],
-        ["Browser relay (server side)", relay],
-        ["Browser", browser],
-        ["Any language (HTTP)", curl],
-      ].map(([title, code]) => (
-        <div key={title}>
-          <div className="setup-head">
-            <span>{title}</span>
-            <CopyButton value={code!} />
-          </div>
-          <pre className="code">{code}</pre>
+    <article className="project-card">
+      <div className="project-card-head">
+        <div>
+          <Link to={`/projects/${project.id}/overview`} className="project-name">
+            {project.name}
+          </Link>
+          <span className="mono muted small-text">{project.slug}</span>
         </div>
-      ))}
-    </div>
+        {status && <span className={`status-pill status-${status.tone}`}>{status.text}</span>}
+      </div>
+
+      <div className="project-spark" role="img" aria-label="Events per hour over the last 24 hours, errors in red">
+        {health?.hourly.map((hour) => (
+          <span
+            key={hour.start}
+            className={hour.errors > 0 ? "has-errors" : undefined}
+            style={{ height: `${hour.total ? Math.max(6, (hour.total / max) * 100) : 3}%` }}
+            title={`${new Date(hour.start).getHours()}:00 · ${hour.total} events, ${hour.errors} errors`}
+          />
+        ))}
+      </div>
+
+      <dl className="project-stats">
+        <div>
+          <dt>Events, 24 h</dt>
+          <dd>{health ? health.events.toLocaleString() : "—"}</dd>
+        </div>
+        <div>
+          <dt>Errors</dt>
+          <dd className={health?.problems ? "bad-text" : undefined}>{health ? health.problems.toLocaleString() : "—"}</dd>
+        </div>
+        <div>
+          <dt>Last event</dt>
+          <dd>{health ? (health.lastEvent ? relative(health.lastEvent) : "—") : "—"}</dd>
+        </div>
+      </dl>
+
+      <div className="project-actions">
+        <Link to={`/projects/${project.id}/overview`} className="button-like ghost">
+          Overview
+        </Link>
+        <Link to={`/projects/${project.id}/logs`} className="button-like ghost">
+          Logs
+        </Link>
+        <Link to={`/projects/${project.id}/settings`} className="button-like ghost icon-button" title={`Settings for ${project.name}`}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+          </svg>
+          <span className="visually-hidden">Settings</span>
+        </Link>
+      </div>
+    </article>
   );
 }
