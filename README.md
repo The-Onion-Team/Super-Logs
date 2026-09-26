@@ -9,13 +9,14 @@
 </p>
 
 <p align="center">
-  <img alt="status" src="https://img.shields.io/badge/status-early%20preview-f0a53a?style=flat-square&labelColor=0e1013">
+  <img alt="status" src="https://img.shields.io/badge/status-stable-3fbf74?style=flat-square&labelColor=0e1013">
   <img alt="server license" src="https://img.shields.io/badge/server-AGPL--3.0-5b8ff9?style=flat-square&labelColor=0e1013">
   <img alt="sdk license" src="https://img.shields.io/badge/SDKs-MIT-3fbf74?style=flat-square&labelColor=0e1013">
   <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A5%2022.13-3fbf74?style=flat-square&labelColor=0e1013">
   <img alt="docker" src="https://img.shields.io/badge/docker-one%20container-5b8ff9?style=flat-square&labelColor=0e1013">
-  <img alt="ram" src="https://img.shields.io/badge/RAM-63--85%20MB-8d96a3?style=flat-square&labelColor=0e1013">
-  <img alt="dashboard" src="https://img.shields.io/badge/dashboard-19%20KB%20gzip-8d96a3?style=flat-square&labelColor=0e1013">
+  <img alt="ram" src="https://img.shields.io/badge/RAM-73--84%20MB-8d96a3?style=flat-square&labelColor=0e1013">
+  <img alt="dashboard" src="https://img.shields.io/badge/dashboard-37%20KB%20gzip-8d96a3?style=flat-square&labelColor=0e1013">
+  <img alt="tests" src="https://img.shields.io/badge/tests-160%20passing-3fbf74?style=flat-square&labelColor=0e1013">
 </p>
 
 <p align="center">
@@ -26,10 +27,14 @@
   <a href="#%EF%B8%8F-roadmap">Roadmap</a>
 </p>
 
+> [!NOTE]
+> **Super-Logs is stable and live.** Logging, incidents, Telegram alerts and the Security page are finished, tested (160 tests) and in production use. New features land on top of this core, as described in the [roadmap](#%EF%B8%8F-roadmap).
+
 ---
 
 <p align="center">
-  <img src="docs/img/logs-light.webp" alt="The Super-Logs log stream: counters, hourly chart, filters and a live table of events" width="100%">
+  <img src="docs/img/overview.webp" alt="A project's overview: counters for the last 24 hours, open incidents, top problems, events per hour, error rate and latency" width="100%">
+  <br><sub>A project's <b>Overview</b> during an outage: the payment provider is timing out, and every symptom is grouped into an incident.</sub>
 </p>
 
 ## 🤔 Why Super-Logs?
@@ -45,22 +50,28 @@ SaaS tools answer this well, but they get expensive, and they keep your users' d
 
 | | |
 |---|---|
-| 🪶 **Tiny** | One Node process, one SQLite file. About 63 MB of RAM at rest and ~82 MB serving traffic. The server ships as a single bundled file — no `node_modules` in the image at all — and the dashboard is 19 KB gzipped. |
+| 🪶 **Tiny** | One Node process, one SQLite file. About 73 MB of RAM after start-up and ~84 MB after a day of traffic. The server ships as a single bundled file — no `node_modules` in the image at all — and the whole dashboard is 37 KB gzipped. |
 | 🔗 **Correlated** | The browser SDK adds an `x-request-id` header to your own requests, and the server SDK picks it up. The browser's *"request failed"* and the server's stack trace land side by side. |
 | 🛡️ **Never hurts your app** | Logging calls never block and never throw. If Super-Logs is down, your app doesn't notice. |
 | 🔒 **Private by default** | Passwords, tokens, cookies, API keys and card numbers are removed *before* they leave your app, and again on arrival. |
 | 🏠 **Yours** | Self-hosted, open source, no telemetry, no account anywhere. |
 
 <details>
-<summary><b>📸 More screenshots</b>: dark mode, phone, projects & keys</summary>
+<summary><b>📸 More screenshots</b>: log stream, dark mode, phone, projects, keys & setup</summary>
 <br>
 <table>
 <tr>
-<td width="68%"><img src="docs/img/logs-dark.webp" alt="Log stream in dark mode"></td>
-<td width="32%"><img src="docs/img/mobile.webp" alt="Log stream on a phone"></td>
+<td colspan="2"><img src="docs/img/logs-light.webp" alt="The live log stream: search, level and service filters, and a table of events"></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/img/projects.webp" alt="Projects, ingest keys and setup snippets"></td>
+<td width="68%"><img src="docs/img/logs-dark.webp" alt="Log stream in dark mode"></td>
+<td width="32%"><img src="docs/img/mobile.webp" alt="A project's overview on a phone"></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/projects.webp" alt="Projects page: one health card per app, with 24-hour activity, errors and open incidents"></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/img/settings.webp" alt="Project settings: ingest keys and copy-paste setup snippets for Node.js, the browser and plain HTTP"></td>
 </tr>
 </table>
 </details>
@@ -85,11 +96,12 @@ SaaS tools answer this well, but they get expensive, and they keep your users' d
 <td width="50%" valign="top">
 
 **📊 Dashboard**
-- Live stream with error/warning counters and an hourly chart
-- Filters for level, service, environment, route, request, session, user, tag and time
-- Full-text search
-- Event details with **same request / same session / same problem** buttons
-- Projects and keys, audit log, system health, dark mode, works on phones
+- **Projects** page with a health card per app: 24-hour activity, errors, open incidents
+- Per-project **Overview**: open incidents, top problems, events per hour, error rate and p50/p95/p99 latency
+- Live **log stream** with full-text search and filters for level, service, environment, route, request, session, user, tag and time
+- Event details with **same request / same session / same user / same problem** buttons
+- Per-project **Settings**: ingest keys, copy-paste setup snippets, alerts
+- Audit log, system health, dark mode, works on phones
 
 **🚨 Incidents & alerts**
 - Repeated errors grouped into one incident by fingerprint
@@ -142,7 +154,7 @@ flowchart LR
 
 <p align="center">
   <img src="docs/img/request-trace.webp" alt="Every event of one request: the browser's failed request, the server error and the slow-response warning" width="100%">
-  <br><sub><b>One request, three events, two services.</b> The browser's failed POST, the server's payment timeout, and the slow-response warning, found with one click.</sub>
+  <br><sub><b>One request, four events, two services.</b> The checkout starting, the server's payment timeout, the slow-response warning and the browser's failed POST, found with one click.</sub>
 </p>
 
 ## 🚀 Quick start
@@ -177,7 +189,7 @@ Open **http://localhost:3400**, sign in, and choose your real password. The one 
 
 ### Send your first event
 
-In the dashboard, go to **Projects**, create a project, then create a key and copy it (it's shown only once). Then:
+In the dashboard, go to **Projects → New project**. You land on the project's **Settings**: under **Ingest keys**, press **New key** and copy it (it's shown only once). Then:
 
 ```bash
 curl -X POST http://localhost:3400/api/ingest \
@@ -190,7 +202,7 @@ curl -X POST http://localhost:3400/api/ingest \
 { "accepted": 1, "rejected": 0 }
 ```
 
-It's already on the Logs page.
+It's already on the project's **Logs** tab. The **Connect your app** section of the same Settings page has ready-to-paste snippets for Node.js, the browser and plain HTTP, with your server's address filled in.
 
 ### Stop or reset
 
@@ -383,6 +395,11 @@ Alerts are then delivered to every channel you turn on. Delivery is tracked per 
 
 The **Security** page (administrators only) shows attacks on your apps and on Super-Logs itself.
 
+<p align="center">
+  <img src="docs/img/security.webp" alt="The Security page: open findings, a 24-hour chart of suspicious requests, setup checks and active dashboard sessions" width="100%">
+  <br><sub>A scanner, a credential-stuffing script and a dashboard password guesser, caught within a minute. Each finding shows the address, what it tried, and one-click access to its requests.</sub>
+</p>
+
 A **signal** is one suspicious request plus the client address: a 401, a probe for `/.env`, a failed sign-in. Signals come from the Node SDK's `security` option and from Super-Logs' own sign-in form and ingest endpoint. They are stored apart from your logs, and they are the only place an IP address is kept (for `SUPER_LOGS_SECURITY_RETENTION_DAYS`, 7 by default).
 
 Once a minute, signals are counted per address over the last 10 minutes. When a rule's threshold is crossed, a **finding** is opened:
@@ -419,7 +436,7 @@ You get a message like this the moment a problem starts, with a link straight to
 >
 > [Open in Super-Logs →](#)
 
-**Set it up in the dashboard** — *Projects → your project → Settings → Telegram alerts*:
+**Set it up in the dashboard** — *your project → Settings → Alerts*:
 
 1. Message [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token.
 2. Add the bot wherever you want alerts (a group works best) and send one message there — Telegram hides a chat until the bot has seen one.
@@ -547,7 +564,7 @@ Requires **Node ≥ 22.13** (24 recommended).
 ```bash
 npm install
 npm run build          # shared → SDKs → dashboard → server
-npm test               # 48 tests: shared, SDKs, server API
+npm test               # 160 tests: shared, SDKs, server API, security, dashboard
 npm run typecheck
 
 npm run dev            # API on :3000 (reads .env)
@@ -558,7 +575,7 @@ npm run pack:sdks      # SDK tarballs in dist/sdks/
 ```text
 apps/
   server/       Hono API · ingestion · housekeeping · node:sqlite     (AGPL-3.0)
-  dashboard/    React dashboard, served by the server                 (AGPL-3.0)
+  dashboard/    Preact dashboard, served by the server                (AGPL-3.0)
 packages/
   shared/       event model · redaction · fingerprints, no deps       (MIT)
   node/         @super-logs/node                                      (MIT)
@@ -574,9 +591,13 @@ IDEA.md         the full product vision
 
 ## 🗺️ Roadmap
 
+Everything checked below is stable and in production use.
+
 - [x] **Phase 1 · Logging core**: ingestion, SDKs, storage, dashboard, auth, retention
-- [ ] **Phase 2 · Incidents & alerts**: incident grouping, alert deduplication, generic webhook and **Telegram** notifications shipped; health checks and alert rules remain
-- [ ] **Security**: signals, findings, setup checks and session management shipped; blocking through the SDK comes next
+- [x] **Incidents & alerts**: incident grouping, alert deduplication, generic webhook and **Telegram** notifications
+- [x] **Security**: signals, findings, setup checks and session management
+- [x] **Dashboard redesign**: projects health cards, per-project overview with charts, sectioned settings
+- [ ] **Phase 2 · Remaining**: health checks, alert rules, and blocking attackers through the SDK
 - [ ] **Phase 3 · AI analysis**: runs automatically on major incidents with a small open model (e.g. Qwen or Kimi) through any OpenAI-compatible endpoint, always keeping *observed evidence* separate from *inference*
 - [ ] **Phase 4 · User diagnostics**: a *"Report a problem"* flow that asks for consent, with a screenshot, the page trail and a link to the server events
 - [ ] **Phase 5 · Open-source hardening**: SDKs on npm, more examples, a security review
